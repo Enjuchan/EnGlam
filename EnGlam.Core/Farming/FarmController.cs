@@ -1,3 +1,5 @@
+using EnGlam.Core.Planning;
+
 namespace EnGlam.Core.Farming;
 
 public sealed record FarmOptions(int MaxRunsPerItem, int MaxRunsPerSession, bool Unsynced);
@@ -125,7 +127,8 @@ public sealed class FarmController(IFarmEnvironment env)
         current = items.FirstOrDefault(i => i.State == FarmItemState.Waiting);
         if (current is null)
         {
-            End("done");
+            var manual = items.Count(i => i.State == FarmItemState.Manual);
+            End(manual == 0 ? "done" : $"done, {manual} {(manual == 1 ? "item" : "items")} left to farm yourself");
             return;
         }
 
@@ -138,8 +141,7 @@ public sealed class FarmController(IFarmEnvironment env)
         var plan = env.Plan(current.ItemId);
         if (!plan.CanFarm)
         {
-            current.State = FarmItemState.Skipped;
-            current.SkipReason = plan.Reason;
+            MarkUnplannable(current, plan);
             return;
         }
 
@@ -170,8 +172,7 @@ public sealed class FarmController(IFarmEnvironment env)
         var plan = env.Plan(item.ItemId);
         if (!plan.CanFarm)
         {
-            item.State = FarmItemState.Skipped;
-            item.SkipReason = plan.Reason;
+            MarkUnplannable(item, plan);
             phase = Phase.NextItem;
             return;
         }
@@ -250,6 +251,13 @@ public sealed class FarmController(IFarmEnvironment env)
         }
 
         phase = Phase.StartRun;
+    }
+
+    /// <summary>Fehlt nur der AutoDuty-Pfad, bleibt das Item für Handläufe offen; sonst wird es übersprungen.</summary>
+    private static void MarkUnplannable(FarmItem item, PlanResult plan)
+    {
+        item.State = plan.Reason == SkipReason.NoPath ? FarmItemState.Manual : FarmItemState.Skipped;
+        item.SkipReason = plan.Reason;
     }
 
     private void End(string reason)

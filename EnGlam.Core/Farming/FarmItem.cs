@@ -9,6 +9,9 @@ public enum FarmItemState
     Obtained,
     AlreadyOwned,
     Skipped,
+
+    /// <summary>AutoDuty hat für keine Quelle einen Pfad; der Spieler muss die Duty selbst laufen.</summary>
+    Manual,
     LimitReached,
     Failed,
 }
@@ -24,7 +27,7 @@ public sealed class FarmItem(uint itemId, string name)
 
     public int Runs { get; internal set; }
 
-    /// <summary>Grund, wenn das Item übersprungen wurde.</summary>
+    /// <summary>Grund, wenn das Item übersprungen wurde oder selbst gefarmt werden muss.</summary>
     public SkipReason? SkipReason { get; internal set; }
 
     /// <summary>Dungeon des aktuellen oder letzten Runs.</summary>

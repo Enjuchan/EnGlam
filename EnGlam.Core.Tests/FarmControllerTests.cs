@@ -149,6 +149,62 @@ public class FarmControllerTests
     }
 
     [Fact]
+    public void ItemWithoutPath_IsLeftToFarmYourself()
+    {
+        env.Plans[100] = new PlanResult(null, null, SkipReason.NoPath);
+        var item = new FarmItem(100, "Edengrace Helm");
+        controller.Start([item], Options());
+
+        Ticks(3);
+
+        Assert.Equal(FarmItemState.Manual, item.State);
+        Assert.Equal(SkipReason.NoPath, item.SkipReason);
+        Assert.Empty(env.Started);
+        Assert.False(controller.IsRunning);
+        Assert.Equal("done, 1 item left to farm yourself", controller.Status);
+    }
+
+    [Fact]
+    public void ItemWithoutPath_DoesNotBlockTheNextItem()
+    {
+        env.Plans[100] = new PlanResult(null, null, SkipReason.NoPath);
+        var manual = new FarmItem(100, "Edengrace Helm");
+        var next = new FarmItem(200, "Gloves");
+        controller.Start([manual, next], Options());
+
+        Ticks(3);
+
+        Assert.Equal(FarmItemState.Manual, manual.State);
+        Assert.Equal(FarmItemState.Running, next.State);
+        Assert.Single(env.Started);
+    }
+
+    [Fact]
+    public void PathLostBeforeNextRun_IsLeftToFarmYourself()
+    {
+        var item = new FarmItem(100, "Sabatons");
+        controller.Start([item], Options());
+        PlayRun(100, dropsItem: false);
+
+        env.Plans[100] = new PlanResult(null, null, SkipReason.NoPath);
+        Ticks(2);
+
+        Assert.Equal(FarmItemState.Manual, item.State);
+    }
+
+    [Fact]
+    public void AllDone_StatusWithoutManualItems_IsDone()
+    {
+        env.Counts[100] = 1;
+        var item = new FarmItem(100, "Sabatons");
+        controller.Start([item], Options());
+
+        Ticks(3);
+
+        Assert.Equal("done", controller.Status);
+    }
+
+    [Fact]
     public void PerItemLimit_MovesOnToNextItem()
     {
         var first = new FarmItem(100, "Sabatons");

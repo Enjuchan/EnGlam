@@ -1,3 +1,4 @@
+using Dalamud.Game;
 using Dalamud.Plugin.Services;
 using EnGlam.Core.Duties;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
@@ -10,8 +11,8 @@ public sealed class GameData
 {
     public required IReadOnlyDictionary<uint, DutyInfo> Duties { get; init; }
 
-    /// <summary>Alle anlegbaren Items, nach Name sortiert.</summary>
-    public required IReadOnlyList<(uint Id, string Name, uint Icon)> EquipableItems { get; init; }
+    /// <summary>Alle anlegbaren Items, nach Name in Spielsprache sortiert.</summary>
+    public required IReadOnlyList<(uint Id, string Name, string EnglishName, uint Icon)> EquipableItems { get; init; }
 
     public static GameData Load(IDataManager data)
     {
@@ -57,9 +58,16 @@ public sealed class GameData
                 trustOrdinal.GetValueOrDefault(cfc.RowId, -1));
         }
 
+        // Englische Namen zusätzlich, weil Sets und Guides im Netz Items englisch nennen.
+        var english = data.GetExcelSheet<Item>(ClientLanguage.English);
+
         var items = data.GetExcelSheet<Item>()
             .Where(i => i.EquipSlotCategory.RowId != 0)
-            .Select(i => (i.RowId, Name: i.Name.ExtractText(), Icon: (uint)i.Icon))
+            .Select(i => (
+                i.RowId,
+                Name: i.Name.ExtractText(),
+                EnglishName: english.GetRowOrDefault(i.RowId)?.Name.ExtractText() ?? string.Empty,
+                Icon: (uint)i.Icon))
             .Where(i => i.Name.Length > 0)
             .OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();

@@ -5,6 +5,7 @@ using EnGlam.Core.Drops;
 using EnGlam.Core.Duties;
 using EnGlam.Core.Farming;
 using EnGlam.Core.History;
+using EnGlam.Core.Import;
 using EnGlam.Core.Planning;
 using EnGlam.Core.Settings;
 using EnGlam.External;
@@ -106,6 +107,7 @@ public sealed class MainWindow(
                 break;
         }
 
+        Preview.Draw();
         ImGui.End();
     }
 
@@ -188,8 +190,14 @@ public sealed class MainWindow(
     {
         Widgets.SectionHeader("Search");
 
-        ImGui.SetNextItemWidth(-1);
+        ImGui.PushFont(UiBuilder.IconFont);
+        var importWidth = ImGui.CalcTextSize(FontAwesomeIcon.FileImport.ToIconString()).X + ImGui.GetStyle().FramePadding.X * 2;
+        ImGui.PopFont();
+
+        ImGui.SetNextItemWidth(-(importWidth + ImGui.GetStyle().ItemSpacing.X));
         ImGui.InputTextWithHint("##search", "Search items with dungeon drops", ref search, 100);
+        ImGui.SameLine();
+        DrawImportButton();
         ImGui.Spacing();
 
         // Mit Favoriten teilt sich die Spalte: oben die Treffer mit eigenem Scrollbereich, unten die Favoriten.
@@ -209,6 +217,49 @@ public sealed class MainWindow(
         ImGui.EndChild();
     }
 
+    private ImportPreview? previewInstance;
+    private ImportPreview Preview => previewInstance ??= new ImportPreview(
+        game, drops, planner, env,
+        () => autoDuty.IsLoaded,
+        () => controller.IsRunning,
+        id => farmList.Any(i => i.ItemId == id),
+        Add);
+
+    private GlamourImport? importer;
+
+    private GlamourImport Importer => importer ??= new GlamourImport(
+        game.EquipableItems.Select(i => new ImportItem(i.Id, i.Name, i.EnglishName, i.Icon)),
+        id => drops.SourcesFor(id).Count > 0);
+
+    private void DrawImportButton()
+    {
+        ImGui.BeginDisabled(controller.IsRunning);
+        if (Widgets.IconButton("import", FontAwesomeIcon.FileImport, "Import a glamour set"))
+            ImGui.OpenPopup("importmenu");
+        ImGui.EndDisabled();
+
+        if (!ImGui.BeginPopup("importmenu"))
+            return;
+
+        if (ImGui.Selectable("From clipboard"))
+            Preview.Show("Clipboard", Importer.MatchAll(GlamourImport.Parse(ImGui.GetClipboardText())));
+
+        ImGui.TextColored(Theme.Muted, "Eorzea Collection: open the glamour, press Ctrl+U,");
+        ImGui.TextColored(Theme.Muted, "then Ctrl+A and Ctrl+C. A list of item names works too.");
+
+        ImGui.Separator();
+        var inspected = InspectImport.WindowOpen ? InspectImport.ItemIds() : [];
+        ImGui.BeginDisabled(inspected.Count == 0);
+        if (ImGui.Selectable("From inspected character"))
+            Preview.Show("Inspected character", [.. inspected.Select(id => new ImportResult(new ImportEntry(game.ItemName(id), game.ItemIcon(id)), id))]);
+        ImGui.EndDisabled();
+
+        if (inspected.Count == 0)
+            ImGui.TextColored(Theme.Muted, "Inspect a character in game first.");
+
+        ImGui.EndPopup();
+    }
+
     private void DrawResults()
     {
         if (search.Length < 2)
@@ -225,7 +276,9 @@ public sealed class MainWindow(
         {
             resultsFor = search;
             results = game.EquipableItems
-                .Where(i => i.Name.Contains(search, StringComparison.OrdinalIgnoreCase) && drops.SourcesFor(i.Id).Count > 0)
+                .Where(i => (i.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                             || i.EnglishName.Contains(search, StringComparison.OrdinalIgnoreCase))
+                            && drops.SourcesFor(i.Id).Count > 0)
                 .Take(100)
                 .Select(i => (i.Id, i.Name, i.Icon, DutyCount(i.Id)))
                 .ToList();
@@ -477,7 +530,11 @@ public sealed class MainWindow(
                 ImGui.SetCursorScreenPos(new Vector2(textX, origin.Y));
                 ImGui.TextUnformatted(item.Name);
 
-                var (pillText, pillBorder, pillColor) = StatePill(item);
+                // Nur ungelaufene Items neu planen; laufende und erledigte tragen ihren Stand selbst.
+                var plan = item.State == FarmItemState.Waiting && item.DutyName is null ? planner.Plan(item.ItemId, env.Context) : null;
+                var manual = item.State == FarmItemState.Manual || plan?.Reason == SkipReason.NoPath;
+
+                var (pillText, pillBorder, pillColor) = StatePill(item, manual);
                 var trashWidth = controller.IsRunning ? 0f : ImGui.GetFrameHeight();
                 var pillX = right - trashWidth - (trashWidth > 0 ? 6 : 0) - Widgets.PillWidth(pillText, false);
                 ImGui.SetCursorScreenPos(new Vector2(pillX, origin.Y - 2));
@@ -491,7 +548,7 @@ public sealed class MainWindow(
                 }
 
                 ImGui.SetCursorScreenPos(new Vector2(textX, origin.Y + lineHeight + 4));
-                ImGui.TextColored(Theme.Muted, DetailLine(item));
+                ImGui.TextColored(Theme.Muted, DetailLine(item, plan, manual));
 
                 var showBar = item.State == FarmItemState.Running || (item.Runs > 0 && !item.IsDone);
                 if (showBar)
@@ -703,15 +760,18 @@ public sealed class MainWindow(
             ? "No rotation plugin loaded (Boss Mod, Wrath Combo or Rotation Solver Reborn)."
             : $"{RotationLabel(config.Rotation)} isn't loaded.";
 
-    private string DetailLine(FarmItem item)
+    private string DetailLine(FarmItem item, PlanResult? plan, bool manual)
     {
+        if (manual)
+            return ManualText(item.ItemId);
+
         if (item.State == FarmItemState.Skipped)
             return ReasonText(item.SkipReason);
 
         var duty = item.DutyName;
         if (duty is null)
         {
-            var plan = planner.Plan(item.ItemId, env.Context);
+            plan ??= planner.Plan(item.ItemId, env.Context);
             if (!plan.CanFarm)
                 return ReasonText(plan.Reason);
 
@@ -721,7 +781,27 @@ public sealed class MainWindow(
         return item.Runs > 0 ? $"{duty} · run {item.Runs}/{config.MaxRunsPerItem}" : duty;
     }
 
-    private static (string Text, Vector4 Border, Vector4 Color) StatePill(FarmItem item) => item.State switch
+    /// <summary>Die Duties ohne AutoDuty-Pfad, in denen das Item droppt, für die Detailzeile.</summary>
+    private string ManualText(uint itemId)
+    {
+        var duties = drops.SourcesFor(itemId)
+            .Select(s => game.Duties.GetValueOrDefault(s.ContentFinderConditionId))
+            .Where(d => d is not null && !autoDuty.HasPath(d.TerritoryType))
+            .Select(d => d!.Name)
+            .Distinct()
+            .ToList();
+
+        return duties.Count switch
+        {
+            0 => "No AutoDuty path. Run it yourself.",
+            1 => $"No AutoDuty path. Run {duties[0]} yourself.",
+            _ => $"No AutoDuty path. Run {duties[0]} (+{duties.Count - 1} more) yourself.",
+        };
+    }
+
+    private static (string Text, Vector4 Border, Vector4 Color) StatePill(FarmItem item, bool manual) => manual
+        ? ("farm yourself", Theme.WarningBorder, Theme.Warning)
+        : item.State switch
     {
         FarmItemState.Running => ("running", Theme.Accent, Theme.AccentLight),
         FarmItemState.Obtained => ("obtained", Theme.SuccessBorder, Theme.Success),
@@ -732,7 +812,7 @@ public sealed class MainWindow(
         _ => ("waiting", Theme.Border, Theme.Muted),
     };
 
-    private static string ReasonText(SkipReason? reason) => reason switch
+    internal static string ReasonText(SkipReason? reason) => reason switch
     {
         SkipReason.NoSource => "No known dungeon drops this item.",
         SkipReason.NoDutyData => "The duty isn't in the game data.",

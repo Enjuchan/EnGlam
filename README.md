@@ -35,7 +35,8 @@ and EnGlam decides what runs next.
 ## How to use it
 
 1. Open the window with `/englam`.
-2. Search for an item on the left. Only items that drop in a duty show up.
+2. Search for an item on the left, by its name in your game language or in English. Only items
+   that drop in a duty show up. Or import a whole glamour, see below.
 3. Add it to the farm list. Click a card to see every duty it drops in, the chance per
    chest where known, and whether the duty is ready for you (unlocked, AutoDuty has a
    path, your level is high enough).
@@ -44,9 +45,38 @@ and EnGlam decides what runs next.
 EnGlam stops on its own when every item on the list is done or a limit is reached, and
 you can stop it at any time.
 
+## Importing a glamour
+
+The **Import** button next to the search brings a whole glamour into your farm list:
+
+- **From Eorzea Collection**: open the glamour in your browser, press `Ctrl+U` to see the page
+  source, then `Ctrl+A` and `Ctrl+C`. Click Import → *From clipboard*. EnGlam picks the items out
+  of the copied page. A plain list of item names, one per line, works too.
+- **From a character in game**: inspect the character, keep the window open, and click Import →
+  *From inspected character*. EnGlam takes the glamour they wear, or the gear itself where nothing
+  is glamoured.
+
+Before anything is added you get a preview with every item and whether it's *farmable*, has to
+be farmed yourself, can't be farmed right now (locked or level too low), has no dungeon source,
+is already on your list or already owned.
+
+EnGlam doesn't load Eorzea Collection itself: the site only lets browsers in, which is why you
+copy the page source instead of pasting a link.
+
+## Farming it yourself
+
+Some items drop in duties AutoDuty has no path for, Savage raids for example. They get a
+**farm yourself** tag with the duty you need to run, and EnGlam skips them while farming.
+
+Run the duty yourself and EnGlam still keeps count: whenever you're not farming with EnGlam and
+enter a duty that drops an open item from your list, leaving it counts as a run in the history,
+and the item is ticked off as soon as it's in your inventory. This works for every open item on
+the list, not only the *farm yourself* ones. In these runs EnGlam rolls Need on your items and
+leaves all other loot to you.
+
 ## Tabs
 
-- **Farm**: search, your favorites and the farm list with the sources of the selected item.
+- **Farm**: search, import, your favorites and the farm list with the sources of the selected item.
 - **History**: everything you've farmed with EnGlam, with runs, sessions and whether you got
   it. An item stays *obtained* even if it's no longer in your inventory; *open* means you
   started but didn't get it yet.
@@ -87,8 +117,9 @@ the next time it loads.
 
 **Rolling** only happens in groups with other players; solo and NPC parties get their loot
 without a roll. EnGlam rolls Need on items from the farm list (Greed if Need isn't
-allowed). The roll function is found by signature on load; if a game patch breaks it,
-EnGlam says so in the header and keeps farming without rolling.
+allowed). In runs you do yourself it never passes on other loot. The roll function is found
+by signature on load; if a game patch breaks it, EnGlam says so in the header and keeps farming
+without rolling.
 
 **Installing dependencies** works like Questionable's: through [ECommons](https://github.com/NightmareXIV/ECommons)
 it adds the plugin's repository to Dalamud if it's missing and installs from there. This
@@ -100,7 +131,7 @@ unloaded, or AutoDuty sits stopped inside the duty for three minutes (death, wip
 
 ## Roadmap
 
-This is the first release. Dungeons and trials work; more is planned:
+Dungeons and trials work, and items AutoDuty can't run are tracked when you run them yourself. More is planned:
 
 - [ ] Rolling is built but hasn't been tested in a real group with other players yet
 - [ ] More sources: raids and trials as their own source, crafting through Artisan,

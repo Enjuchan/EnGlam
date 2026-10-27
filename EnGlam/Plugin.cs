@@ -31,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly SettingsGuard guard;
     private readonly FarmEnvironment env;
     private readonly FarmController controller;
+    private readonly ManualTracker manual;
     private readonly MainWindow window;
     private DateTime nextTick;
 
@@ -60,6 +61,23 @@ public sealed class Plugin : IDalamudPlugin
         rolling = new LootRolling(SigScanner, Log);
 
         farmList = config.FarmList.Select(id => new FarmItem(id, game.ItemName(id))).ToList();
+
+        manual = new ManualTracker(
+            id => drops.SourcesFor(id)
+                .Select(s => game.Duties.GetValueOrDefault(s.ContentFinderConditionId))
+                .Where(d => d is not null)
+                .Select(d => d!.TerritoryType),
+            env.CountItem,
+            id =>
+            {
+                history.RecordRun(id, DateTime.Now);
+                Log.Information("Handlauf gezählt: {Item}", game.ItemName(id));
+            },
+            id =>
+            {
+                history.RecordObtained(id, DateTime.Now);
+                Log.Information("Im Handlauf erhalten: {Item}", game.ItemName(id));
+            });
         Ui.Widgets.Init(Textures);
         window = new MainWindow(config, Save, drops, game, planner, env, controller, farmList, autoDuty, guard, rolling,
             PluginInterface.Manifest.AssemblyVersion.ToString(3), TryOn, history, new Dependencies(PluginInterface, Log), Log);
@@ -94,11 +112,21 @@ public sealed class Plugin : IDalamudPlugin
             rolling.Update(wanted, config.PassOthers);
 
             controller.Tick();
+            manual.Tick(DateTime.Now, env.CurrentTerritory, farming: true, farmList);
         }
-        else if (guard.Pending.Count > 0)
+        else
         {
+            // Beim Ausloggen fällt das Gebiet auf 0; das wäre sonst ein verlassener Run.
+            if (env.IsLoggedIn)
+                manual.Tick(DateTime.Now, env.CurrentTerritory, farming: false, farmList);
+
+            // In Handläufen nur Need auf Listen-Items; den Rest entscheidet der Spieler selbst.
+            if (manual.InTrackedDuty)
+                rolling.Update(manual.Tracked.Select(i => i.ItemId).ToHashSet(), passOthers: false);
+
             // Offene Einstellungen nach einem Absturz oder einem abgebrochenen Lauf.
-            env.RestoreSettings();
+            if (guard.Pending.Count > 0)
+                env.RestoreSettings();
         }
 
         // Auch Wechsel durch Start und Stopp im Fenster landen so im Log, nicht nur die aus dem Ablauf.
