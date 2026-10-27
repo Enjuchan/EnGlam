@@ -1,0 +1,11 @@
+{
+  "Name": "EnGlam",
+  "Author": "Enjuchan",
+  "Punchline": "Pick the glamour you want, press start, and let your other plugins farm it.",
+  "Description": "Finds the dungeons that drop the items you select and has AutoDuty run them until each item is in your inventory. Switches your chosen rotation plugin and rolls Need on the item you are after.\n\nRequires AutoDuty. Optional: Boss Mod, Wrath Combo or Rotation Solver Reborn. Drop data from LuminaSupplemental.",
+  "ApplicableVersion": "any",
+  "Tags": [ "glamour", "farming", "autoduty", "dungeon" ],
+  "CategoryTags": [ "other" ],
+  "LoadRequiredState": 0,
+  "LoadSync": false
+}

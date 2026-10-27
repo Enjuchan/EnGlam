@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="EnGlam.Core/EnGlam.Core.csproj" />
+  <Project Path="EnGlam/EnGlam.csproj" />
+  <Project Path="EnGlam.Core.Tests/EnGlam.Core.Tests.csproj" />
+</Solution>
