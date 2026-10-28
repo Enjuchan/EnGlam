@@ -1,5 +1,6 @@
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -35,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly FarmController controller;
     private readonly ManualTracker manual;
     private readonly MainWindow window;
+    private readonly WindowSystem windows = new("EnGlam");
     private DateTime nextTick;
 
     public Plugin()
@@ -43,6 +45,7 @@ public sealed class Plugin : IDalamudPlugin
         ECommons.ECommonsMain.Init(PluginInterface, this);
 
         config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Loc.Init(PluginInterface, config.Language);
 
         var drops = DropTables.Load(Log).ToIndex();
         var game = GameData.Load(Data);
@@ -85,18 +88,27 @@ public sealed class Plugin : IDalamudPlugin
         window = new MainWindow(config, Save, drops, game, planner, env, controller, farmList, autoDuty, guard, rolling,
             version, TryOn, history,
             new Dependencies(PluginInterface, Log, EnGlamDependencies.Groups), EnGlamAbout.Create(version), Log);
+        windows.AddWindow(window);
 
         Framework.Update += OnUpdate;
         PluginInterface.UiBuilder.Draw += Draw;
         PluginInterface.UiBuilder.OpenMainUi += Toggle;
         PluginInterface.UiBuilder.OpenConfigUi += Toggle;
 
-        Commands.AddHandler(Command, new CommandInfo((_, _) => Toggle())
-        {
-            HelpMessage = EnGlamAbout.ToggleEffect,
-        });
+        // Dalamud übernimmt den Hilfetext bei der Anmeldung, deshalb wird der Befehl beim Sprachwechsel neu angemeldet.
+        RegisterCommand();
+        Loc.Changed += RegisterCommand;
 
         Log.Information("EnGlam geladen.");
+    }
+
+    private void RegisterCommand()
+    {
+        Commands.RemoveHandler(Command);
+        Commands.AddHandler(Command, new CommandInfo((_, _) => Toggle())
+        {
+            HelpMessage = EnGlamAbout.ToggleEffect.ToString(),
+        });
     }
 
     private void Save() => PluginInterface.SavePluginConfig(config);
@@ -151,10 +163,10 @@ public sealed class Plugin : IDalamudPlugin
         if (Condition[ConditionFlag.BetweenAreas] || Condition[ConditionFlag.BetweenAreas51])
             return;
 
-        window.Draw();
+        windows.Draw();
     }
 
-    private void Toggle() => window.Visible = !window.Visible;
+    private void Toggle() => window.Toggle();
 
     /// <summary>Öffnet die Anprobe des Spiels; im Framework-Takt, so wie Allagan Tools es macht.</summary>
     private static void TryOn(uint itemId) =>
@@ -162,7 +174,10 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        Loc.Changed -= RegisterCommand;
+        Loc.Dispose();
         Commands.RemoveHandler(Command);
+        windows.RemoveAllWindows();
         Framework.Update -= OnUpdate;
         PluginInterface.UiBuilder.Draw -= Draw;
         PluginInterface.UiBuilder.OpenMainUi -= Toggle;

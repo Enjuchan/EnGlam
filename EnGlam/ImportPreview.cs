@@ -24,23 +24,23 @@ public sealed class ImportPreview(
     private const string PopupId = "Import###EnGlamImport";
     private const float RowHeight = 34f;
 
-    private sealed class Row(string name, uint itemId, uint icon, ImportStatus status, string detail)
+    private sealed class Row(string name, uint itemId, uint icon, ImportStatus status, LocText detail)
     {
         public string Name { get; } = name;
         public uint ItemId { get; } = itemId;
         public uint Icon { get; } = icon;
         public ImportStatus Status { get; } = status;
-        public string Detail { get; } = detail;
+        public LocText Detail { get; } = detail;
         public bool Selectable => Status is ImportStatus.Farmable or ImportStatus.FarmYourself or ImportStatus.Blocked;
         public bool Selected;
     }
 
     private List<Row> rows = [];
-    private string source = string.Empty;
+    private LocText source;
     private bool pathsUnknown;
     private bool openRequested;
 
-    public void Show(string sourceLabel, IReadOnlyList<ImportResult> results)
+    public void Show(LocText sourceLabel, IReadOnlyList<ImportResult> results)
     {
         source = sourceLabel;
         pathsUnknown = !autoDutyLoaded();
@@ -56,25 +56,25 @@ public sealed class ImportPreview(
     private Row Classify(ImportResult result, PlanContext context)
     {
         if (result.ItemId is not { } id)
-            return new Row(result.Entry.Name, 0, 0, ImportStatus.NotFound, "Not in the game data.");
+            return new Row(result.Entry.Name, 0, 0, ImportStatus.NotFound, new("Not in the game data.", "Nicht in den Spieldaten."));
 
-        Row Make(ImportStatus status, string detail) => new(game.ItemName(id), id, game.ItemIcon(id), status, detail);
+        Row Make(ImportStatus status, LocText detail) => new(game.ItemName(id), id, game.ItemIcon(id), status, detail);
 
         if (onList(id))
-            return Make(ImportStatus.OnList, "Already on your farm list.");
+            return Make(ImportStatus.OnList, new("Already on your farm list.", "Steht schon auf deiner Farmliste."));
 
         if (env.CountItem(id) > 0)
-            return Make(ImportStatus.Owned, "Already in your inventory or armoury.");
+            return Make(ImportStatus.Owned, new("Already in your inventory or armoury.", "Schon in deinem Inventar oder in der Rüstkammer."));
 
         if (drops.SourcesFor(id).Count == 0)
-            return Make(ImportStatus.NoSource, "No known dungeon drops this item.");
+            return Make(ImportStatus.NoSource, MainWindow.ReasonText(SkipReason.NoSource));
 
         var plan = planner.Plan(id, context);
         if (plan.CanFarm)
-            return Make(ImportStatus.Farmable, plan.Duty!.Name);
+            return Make(ImportStatus.Farmable, new(plan.Duty!.Name, plan.Duty.Name));
 
         return plan.Reason == SkipReason.NoPath
-            ? Make(ImportStatus.FarmYourself, "AutoDuty has no path. Run it yourself.")
+            ? Make(ImportStatus.FarmYourself, new("AutoDuty has no path. Run it yourself.", "AutoDuty hat keinen Pfad. Lauf es selbst."))
             : Make(ImportStatus.Blocked, MainWindow.ReasonText(plan.Reason));
     }
 
@@ -93,11 +93,11 @@ public sealed class ImportPreview(
         var selected = rows.Count(r => r.Selected);
         Widgets.SectionHeader($"Import · {source}");
         ImGui.TextColored(Theme.Muted, rows.Count == 0
-            ? "Nothing found to import."
-            : $"{rows.Count} items found, {selected} selected.");
+            ? Loc.T("Nothing found to import.", "Nichts zum Importieren gefunden.")
+            : Loc.T($"{rows.Count} items found, {selected} selected.", $"{rows.Count} Items gefunden, {selected} ausgewählt."));
 
         if (pathsUnknown)
-            ImGui.TextColored(Theme.Warning, "AutoDuty isn't loaded, so paths can't be checked.");
+            ImGui.TextColored(Theme.Warning, Loc.T("AutoDuty isn't loaded, so paths can't be checked.", "AutoDuty ist nicht geladen, deshalb lassen sich die Pfade nicht prüfen."));
 
         ImGui.Spacing();
         var footer = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemSpacing.Y * 2;
@@ -108,7 +108,7 @@ public sealed class ImportPreview(
 
         ImGui.Spacing();
         var locked = farming();
-        if (Widgets.PrimaryButton(selected == 1 ? "Add 1 item" : $"Add {selected} items", FontAwesomeIcon.Plus, selected > 0 && !locked))
+        if (Widgets.PrimaryButton(selected == 1 ? Loc.T("Add 1 item", "1 Item hinzufügen") : Loc.T($"Add {selected} items", $"{selected} Items hinzufügen"), FontAwesomeIcon.Plus, selected > 0 && !locked))
         {
             foreach (var row in rows.Where(r => r.Selected))
                 add(row.ItemId);
@@ -116,13 +116,13 @@ public sealed class ImportPreview(
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Cancel", new Vector2(0, ImGui.GetFrameHeight())))
+        if (ImGui.Button(Loc.T("Cancel", "Abbrechen"), new Vector2(0, ImGui.GetFrameHeight())))
             ImGui.CloseCurrentPopup();
 
         if (locked)
         {
             ImGui.SameLine();
-            ImGui.TextColored(Theme.Muted, "Stop farming to change the list.");
+            ImGui.TextColored(Theme.Muted, Loc.T("Stop farming to change the list.", "Stoppe das Farmen, um die Liste zu ändern."));
         }
 
         ImGui.EndPopup();
@@ -147,7 +147,7 @@ public sealed class ImportPreview(
 
         var textColor = row.Selectable ? Theme.Text : Theme.Muted;
         draw.AddText(start + new Vector2(x + 38, 1), Theme.U32(textColor), row.Name);
-        draw.AddText(start + new Vector2(x + 38, 17), Theme.U32(Theme.Muted), row.Detail);
+        draw.AddText(start + new Vector2(x + 38, 17), Theme.U32(Theme.Muted), row.Detail.ToString());
 
         var (text, border, color) = StatusPill(row.Status);
         var pillWidth = Widgets.PillWidth(text, false);
@@ -160,12 +160,12 @@ public sealed class ImportPreview(
 
     private static (string Text, Vector4 Border, Vector4 Color) StatusPill(ImportStatus status) => status switch
     {
-        ImportStatus.Farmable => ("farmable", Theme.Accent, Theme.AccentLight),
-        ImportStatus.FarmYourself => ("farm yourself", Theme.WarningBorder, Theme.Warning),
-        ImportStatus.Blocked => ("not now", Theme.WarningBorder, Theme.Warning),
-        ImportStatus.Owned => ("owned", Theme.SuccessBorder, Theme.Success),
-        ImportStatus.OnList => ("on list", Theme.Border, Theme.Muted),
-        ImportStatus.NoSource => ("no dungeon source", Theme.Border, Theme.Muted),
-        _ => ("not found", Theme.DangerBorder, Theme.Danger),
+        ImportStatus.Farmable => (Loc.T("farmable", "farmbar"), Theme.Accent, Theme.AccentLight),
+        ImportStatus.FarmYourself => (Loc.T("farm yourself", "selbst farmen"), Theme.WarningBorder, Theme.Warning),
+        ImportStatus.Blocked => (Loc.T("not now", "gerade nicht"), Theme.WarningBorder, Theme.Warning),
+        ImportStatus.Owned => (Loc.T("owned", "vorhanden"), Theme.SuccessBorder, Theme.Success),
+        ImportStatus.OnList => (Loc.T("on list", "auf der Liste"), Theme.Border, Theme.Muted),
+        ImportStatus.NoSource => (Loc.T("no dungeon source", "keine Dungeon-Quelle"), Theme.Border, Theme.Muted),
+        _ => (Loc.T("not found", "nicht gefunden"), Theme.DangerBorder, Theme.Danger),
     };
 }

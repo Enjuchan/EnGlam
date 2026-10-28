@@ -4,6 +4,26 @@ namespace EnGlam.Core.Farming;
 
 public sealed record FarmOptions(int MaxRunsPerItem, int MaxRunsPerSession, bool Unsynced);
 
+/// <summary>Art des Status, damit die Anzeige ihn in jeder Sprache formulieren kann.</summary>
+public enum StatusCode
+{
+    Idle,
+    Starting,
+    Stopped,
+    PrepareFailed,
+    LoggedOut,
+    AutoDutyUnloaded,
+    JobChanged,
+    Done,
+    DoneManual,
+    SessionLimit,
+    StartFailed,
+    StoppedBeforeEntry,
+    StoppedInDuty,
+    RunStarting,
+    InRun,
+}
+
 /// <summary>
 /// Arbeitet die Farm-Liste ab: pro Item planen, einzelne Runs über AutoDuty starten, nach jedem Run das Inventar
 /// prüfen, bis das Item da ist oder ein Limit greift. Wird regelmäßig über <see cref="Tick"/> angetrieben.
@@ -37,7 +57,26 @@ public sealed class FarmController(IFarmEnvironment env)
 
     public int SessionRuns { get; private set; }
 
+    /// <summary>Englischer Text für Log und Tests; die Anzeige übersetzt über <see cref="Code"/>.</summary>
     public string Status { get; private set; } = "idle";
+
+    public StatusCode Code { get; private set; } = StatusCode.Idle;
+
+    /// <summary>Run-Nummer oder Zahl der Items zum Selbstfarmen, je nach <see cref="Code"/>.</summary>
+    public int StatusCount { get; private set; }
+
+    public string StatusItem { get; private set; } = string.Empty;
+
+    public string StatusDuty { get; private set; } = string.Empty;
+
+    private void SetStatus(string text, StatusCode code, int count = 0, string item = "", string duty = "")
+    {
+        Status = text;
+        Code = code;
+        StatusCount = count;
+        StatusItem = item;
+        StatusDuty = duty;
+    }
 
     public void Start(IReadOnlyList<FarmItem> list, FarmOptions farmOptions)
     {
@@ -50,11 +89,13 @@ public sealed class FarmController(IFarmEnvironment env)
         startJob = env.ClassJobId;
         env.OnSessionStarted();
         phase = Phase.Prepare;
-        Status = "starting";
+        SetStatus("starting", StatusCode.Starting);
     }
 
     /// <summary>Bricht ab, stoppt AutoDuty und setzt die Einstellungen zurück.</summary>
-    public void Stop(string reason = "stopped")
+    public void Stop(string reason = "stopped") => Stop(reason, StatusCode.Stopped);
+
+    private void Stop(string reason, StatusCode code)
     {
         if (!IsRunning)
             return;
@@ -65,14 +106,14 @@ public sealed class FarmController(IFarmEnvironment env)
         if (current is { State: FarmItemState.Running })
             current.State = FarmItemState.Waiting;
 
-        End(reason);
+        End(reason, code);
     }
 
     public void Tick()
     {
-        if (phase != Phase.Idle && AbortReason() is { } reason)
+        if (phase != Phase.Idle && AbortReason() is { } abort)
         {
-            Stop(reason);
+            Stop(abort.Text, abort.Code);
             return;
         }
 
@@ -81,7 +122,7 @@ public sealed class FarmController(IFarmEnvironment env)
             case Phase.Prepare:
                 if (!env.Prepare())
                 {
-                    End("AutoDuty could not be prepared");
+                    End("AutoDuty could not be prepared", StatusCode.PrepareFailed);
                     break;
                 }
 
@@ -107,17 +148,17 @@ public sealed class FarmController(IFarmEnvironment env)
     }
 
     /// <summary>Gründe, den Lauf geordnet abzubrechen; null, wenn alles in Ordnung ist.</summary>
-    private string? AbortReason()
+    private (string Text, StatusCode Code)? AbortReason()
     {
         if (!env.IsLoggedIn)
-            return "logged out";
+            return ("logged out", StatusCode.LoggedOut);
 
         if (!env.AutoDutyLoaded)
-            return "AutoDuty was unloaded";
+            return ("AutoDuty was unloaded", StatusCode.AutoDutyUnloaded);
 
         // Stufe, Rotation und Planung hängen am Job; ein Wechsel mitten im Lauf ist kein Zustand, den EnGlam bedient.
         if (env.ClassJobId != startJob)
-            return "job changed";
+            return ("job changed", StatusCode.JobChanged);
 
         return null;
     }
@@ -128,7 +169,10 @@ public sealed class FarmController(IFarmEnvironment env)
         if (current is null)
         {
             var manual = items.Count(i => i.State == FarmItemState.Manual);
-            End(manual == 0 ? "done" : $"done, {manual} {(manual == 1 ? "item" : "items")} left to farm yourself");
+            if (manual == 0)
+                End("done", StatusCode.Done);
+            else
+                End($"done, {manual} {(manual == 1 ? "item" : "items")} left to farm yourself", StatusCode.DoneManual, manual);
             return;
         }
 
@@ -157,7 +201,7 @@ public sealed class FarmController(IFarmEnvironment env)
         if (SessionRuns >= options.MaxRunsPerSession)
         {
             item.State = FarmItemState.Waiting;
-            End("session limit reached");
+            End("session limit reached", StatusCode.SessionLimit);
             return;
         }
 
@@ -180,7 +224,7 @@ public sealed class FarmController(IFarmEnvironment env)
         if (!env.StartRun(plan.Duty!, plan.Mode, options.Unsynced))
         {
             item.State = FarmItemState.Failed;
-            End("AutoDuty could not start the run");
+            End("AutoDuty could not start the run", StatusCode.StartFailed);
             return;
         }
 
@@ -191,7 +235,7 @@ public sealed class FarmController(IFarmEnvironment env)
         dutyTerritory = plan.Duty.TerritoryType;
         stoppedSince = null;
         phase = Phase.Starting;
-        Status = $"{item.Name}: run {item.Runs} in {plan.Duty.Name}, starting";
+        SetStatus($"{item.Name}: run {item.Runs} in {plan.Duty.Name}, starting", StatusCode.RunStarting, item.Runs, item.Name, plan.Duty.Name);
     }
 
     private void WaitForEntry()
@@ -200,7 +244,7 @@ public sealed class FarmController(IFarmEnvironment env)
         {
             phase = Phase.InDuty;
             stoppedSince = null;
-            Status = $"{current!.Name}: run {current.Runs} in {current.DutyName}";
+            SetStatus($"{current!.Name}: run {current.Runs} in {current.DutyName}", StatusCode.InRun, current.Runs, current.Name, current.DutyName ?? string.Empty);
             return;
         }
 
@@ -211,7 +255,7 @@ public sealed class FarmController(IFarmEnvironment env)
         if (now - stoppedSince > StartTimeout)
         {
             current!.State = FarmItemState.Failed;
-            End("AutoDuty stopped before entering the duty");
+            End("AutoDuty stopped before entering the duty", StatusCode.StoppedBeforeEntry);
         }
     }
 
@@ -233,7 +277,7 @@ public sealed class FarmController(IFarmEnvironment env)
         }
 
         if (now - stoppedSince > StuckTimeout)
-            Stop("AutoDuty stopped inside the duty");
+            Stop("AutoDuty stopped inside the duty", StatusCode.StoppedInDuty);
     }
 
     private void Check()
@@ -260,11 +304,11 @@ public sealed class FarmController(IFarmEnvironment env)
         item.SkipReason = plan.Reason;
     }
 
-    private void End(string reason)
+    private void End(string reason, StatusCode code, int count = 0)
     {
         phase = Phase.Idle;
         current = null;
-        Status = reason;
+        SetStatus(reason, code, count);
         env.RestoreSettings();
     }
 }

@@ -1,6 +1,7 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Windowing;
 using EnGlam.Core.Drops;
 using EnGlam.Core.Duties;
 using EnGlam.Core.Farming;
@@ -13,66 +14,113 @@ using EnGlam.Ui;
 
 namespace EnGlam;
 
-public sealed class MainWindow(
-    Configuration config,
-    Action save,
-    DropIndex drops,
-    GameData game,
-    Planner planner,
-    FarmEnvironment env,
-    FarmController controller,
-    List<FarmItem> farmList,
-    AutoDutyIpc autoDuty,
-    SettingsGuard guard,
-    LootRolling rolling,
-    string version,
-    Action<uint> tryOn,
-    FarmHistory history,
-    Dependencies dependencies,
-    AboutInfo about,
-    Dalamud.Plugin.Services.IPluginLog log)
+public sealed class MainWindow : Window
 {
     private static readonly Party[] Parties = Enum.GetValues<Party>();
     private static readonly RotationChoice[] Rotations = Enum.GetValues<RotationChoice>();
 
-    public bool Visible;
+    private readonly Configuration config;
+    private readonly Action save;
+    private readonly DropIndex drops;
+    private readonly GameData game;
+    private readonly Planner planner;
+    private readonly FarmEnvironment env;
+    private readonly FarmController controller;
+    private readonly List<FarmItem> farmList;
+    private readonly AutoDutyIpc autoDuty;
+    private readonly SettingsGuard guard;
+    private readonly LootRolling rolling;
+    private readonly string version;
+    private readonly Action<uint> tryOn;
+    private readonly FarmHistory history;
+    private readonly Dependencies dependencies;
+    private readonly AboutInfo about;
+    private readonly FrameTiming timing;
 
+    private Theme.Scope? themeScope;
     private string search = string.Empty;
     private string? resultsFor;
     private List<(uint Id, string Name, uint Icon, int Duties)> results = [];
     private uint selectedItem;
 
-    public void Draw()
+    public MainWindow(
+        Configuration config,
+        Action save,
+        DropIndex drops,
+        GameData game,
+        Planner planner,
+        FarmEnvironment env,
+        FarmController controller,
+        List<FarmItem> farmList,
+        AutoDutyIpc autoDuty,
+        SettingsGuard guard,
+        LootRolling rolling,
+        string version,
+        Action<uint> tryOn,
+        FarmHistory history,
+        Dependencies dependencies,
+        AboutInfo about,
+        Dalamud.Plugin.Services.IPluginLog log)
+        : base("EnGlam###EnGlamMain")
     {
-        if (!Visible)
-            return;
+        this.config = config;
+        this.save = save;
+        this.drops = drops;
+        this.game = game;
+        this.planner = planner;
+        this.env = env;
+        this.controller = controller;
+        this.farmList = farmList;
+        this.autoDuty = autoDuty;
+        this.guard = guard;
+        this.rolling = rolling;
+        this.version = version;
+        this.tryOn = tryOn;
+        this.history = history;
+        this.dependencies = dependencies;
+        this.about = about;
+        timing = new FrameTiming(log, "Draw", TimeSpan.FromSeconds(5), () => config.ShowDiagnostics);
 
+        Size = new Vector2(960, 660);
+        SizeCondition = ImGuiCond.FirstUseEver;
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(780, 480), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
+
+        // Das Fenster war bisher ein einfaches ImGui-Fenster ohne Escape-Schließen, Töne und Einblenden.
+        RespectCloseHotkey = false;
+        DisableWindowSounds = true;
+        DisableFadeInFadeOut = true;
+
+        TitleBarButtons.Add(Loc.CreateButton(code =>
+        {
+            config.Language = code;
+            save();
+        }));
+    }
+
+    // Theme muss vor dem Begin des Fensters gesetzt sein, weil Fensterhintergrund und Titelleiste davon abhängen.
+    public override void PreDraw() => themeScope = Theme.Push();
+
+    public override void PostDraw()
+    {
+        themeScope?.Dispose();
+        themeScope = null;
+    }
+
+    public override void Draw()
+    {
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        DrawWindow();
+        DrawContent();
         timing.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started));
     }
 
-    private readonly FrameTiming timing = new(log, "Draw", TimeSpan.FromSeconds(5), () => config.ShowDiagnostics);
-
-    private void DrawWindow()
+    private void DrawContent()
     {
-        using var theme = Theme.Push();
-
-        ImGui.SetNextWindowSize(new Vector2(960, 660), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSizeConstraints(new Vector2(780, 480), new Vector2(float.MaxValue, float.MaxValue));
-
-        if (!ImGui.Begin("EnGlam###EnGlamMain", ref Visible))
-        {
-            ImGui.End();
-            return;
-        }
-
         Decor.Background();
         Decor.HeaderBand(ImGui.GetFrameHeight() + ImGui.GetStyle().ItemSpacing.Y + ImGui.GetTextLineHeight());
         DrawHeader();
         ImGui.Dummy(new Vector2(0, 6));
 
-        Widgets.PillTabs("tabs", Tabs, ref tab);
+        Widgets.PillTabs("tabs", Tabs(), ref tab);
         ImGui.Dummy(new Vector2(0, 8));
 
         switch ((Tab)tab)
@@ -115,18 +163,17 @@ public sealed class MainWindow(
         }
 
         Preview.Draw();
-        ImGui.End();
     }
 
     private enum Tab { Farm, History, Settings, Dependencies, About }
 
-    private static readonly (FontAwesomeIcon Icon, string Label)[] Tabs =
+    private static (FontAwesomeIcon Icon, string Label)[] Tabs() =>
     [
-        (FontAwesomeIcon.Tshirt, "Farm"),
-        (FontAwesomeIcon.History, "History"),
-        (FontAwesomeIcon.Cog, "Settings"),
-        (FontAwesomeIcon.PuzzlePiece, "Dependencies"),
-        (FontAwesomeIcon.InfoCircle, "About"),
+        (FontAwesomeIcon.Tshirt, Loc.T("Farm", "Farm")),
+        (FontAwesomeIcon.History, Loc.T("History", "Verlauf")),
+        (FontAwesomeIcon.Cog, Loc.T("Settings", "Einstellungen")),
+        (FontAwesomeIcon.PuzzlePiece, Loc.T("Dependencies", "Abhängigkeiten")),
+        (FontAwesomeIcon.InfoCircle, Loc.T("About", "Info")),
     ];
 
     private int tab;
@@ -144,8 +191,8 @@ public sealed class MainWindow(
 
         var missing = MissingRequirement();
         var rotationName = RotationLabel(config.Rotation);
-        var rollingText = rolling.Available ? "Rolling" : "Rolling unavailable";
-        var startLabel = controller.IsRunning ? "Stop" : "Start";
+        var rollingText = rolling.Available ? Loc.T("Rolling", "Würfeln") : Loc.T("Rolling unavailable", "Würfeln nicht verfügbar");
+        var startLabel = controller.IsRunning ? Loc.T("Stop", "Stopp") : Loc.T("Start", "Start");
         var startIcon = controller.IsRunning ? FontAwesomeIcon.Stop : FontAwesomeIcon.Play;
 
         var spacing = ImGui.GetStyle().ItemSpacing.X;
@@ -157,13 +204,13 @@ public sealed class MainWindow(
         ImGui.SameLine();
         Widgets.StatusPill(rotationName, env.RotationAvailable ? Theme.Success : Theme.Danger);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Rotation plugin AutoDuty uses while farming.");
+            ImGui.SetTooltip(Loc.T("Rotation plugin AutoDuty uses while farming.", "Rotation-Plugin, das AutoDuty beim Farmen nutzt."));
         ImGui.SameLine();
         Widgets.StatusPill(rollingText, rolling.Available ? Theme.Success : Theme.Warning);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(rolling.Available
-                ? "Rolls Need on farm list items in groups with other players."
-                : "Game function not found, probably after a patch. Farming works without rolling.");
+                ? Loc.T("Rolls Need on farm list items in groups with other players.", "Würfelt in Gruppen mit anderen Spielern Bedarf auf Items der Farmliste.")
+                : Loc.T("Game function not found, probably after a patch. Farming works without rolling.", "Spielfunktion nicht gefunden, wahrscheinlich nach einem Patch. Farmen geht auch ohne Würfeln."));
         ImGui.SameLine();
 
         if (controller.IsRunning)
@@ -183,12 +230,12 @@ public sealed class MainWindow(
             }
 
             if (!canStart && ImGui.IsItemHovered())
-                ImGui.SetTooltip(missing ?? "Add an item to the farm list first.");
+                ImGui.SetTooltip(missing ?? Loc.T("Add an item to the farm list first.", "Füge zuerst ein Item zur Farmliste hinzu."));
         }
 
-        var status = $"{controller.Status} · runs this session: {controller.SessionRuns}";
+        var status = Loc.T($"{StatusText()} · runs this session: {controller.SessionRuns}", $"{StatusText()} · Runs in dieser Sitzung: {controller.SessionRuns}");
         if (guard.Pending.Count > 0)
-            status += $" · settings waiting to be restored: {guard.Pending.Count}";
+            status += Loc.T($" · settings waiting to be restored: {guard.Pending.Count}", $" · Einstellungen warten auf Wiederherstellung: {guard.Pending.Count}");
         if (missing is not null && !controller.IsRunning)
             status += $" · {missing}";
         var statusStart = ImGui.GetCursorPosX();
@@ -204,16 +251,46 @@ public sealed class MainWindow(
         }
     }
 
+    private string StatusText()
+    {
+        var german = Loc.Current == Language.German;
+        var n = controller.StatusCount;
+        var item = controller.StatusItem;
+        var duty = controller.StatusDuty;
+
+        return controller.Code switch
+        {
+            StatusCode.Idle => german ? "bereit" : "idle",
+            StatusCode.Starting => german ? "startet" : "starting",
+            StatusCode.Stopped => german ? "gestoppt" : "stopped",
+            StatusCode.PrepareFailed => german ? "AutoDuty ließ sich nicht vorbereiten" : "AutoDuty could not be prepared",
+            StatusCode.LoggedOut => german ? "ausgeloggt" : "logged out",
+            StatusCode.AutoDutyUnloaded => german ? "AutoDuty wurde entladen" : "AutoDuty was unloaded",
+            StatusCode.JobChanged => german ? "Job gewechselt" : "job changed",
+            StatusCode.Done => german ? "fertig" : "done",
+            StatusCode.DoneManual => german
+                ? $"fertig, {n} {(n == 1 ? "Item" : "Items")} zum Selbstfarmen übrig"
+                : $"done, {n} {(n == 1 ? "item" : "items")} left to farm yourself",
+            StatusCode.SessionLimit => german ? "Sitzungslimit erreicht" : "session limit reached",
+            StatusCode.StartFailed => german ? "AutoDuty konnte den Run nicht starten" : "AutoDuty could not start the run",
+            StatusCode.StoppedBeforeEntry => german ? "AutoDuty hat vor dem Betreten der Duty gestoppt" : "AutoDuty stopped before entering the duty",
+            StatusCode.StoppedInDuty => german ? "AutoDuty hat in der Duty gestoppt" : "AutoDuty stopped inside the duty",
+            StatusCode.RunStarting => german ? $"{item}: Run {n} in {duty}, startet" : $"{item}: run {n} in {duty}, starting",
+            StatusCode.InRun => german ? $"{item}: Run {n} in {duty}" : $"{item}: run {n} in {duty}",
+            _ => controller.Status,
+        };
+    }
+
     private void DrawSearch()
     {
-        Widgets.SectionHeader("Search");
+        Widgets.SectionHeader(Loc.T("Search", "Suche"));
 
         ImGui.PushFont(UiBuilder.IconFont);
         var importWidth = ImGui.CalcTextSize(FontAwesomeIcon.FileImport.ToIconString()).X + ImGui.GetStyle().FramePadding.X * 2;
         ImGui.PopFont();
 
         ImGui.SetNextItemWidth(-(importWidth + ImGui.GetStyle().ItemSpacing.X));
-        ImGui.InputTextWithHint("##search", "Search items with dungeon drops", ref search, 100);
+        ImGui.InputTextWithHint("##search", Loc.T("Search items with dungeon drops", "Items mit Dungeon-Drops suchen"), ref search, 100);
         ImGui.SameLine();
         DrawImportButton();
         ImGui.Spacing();
@@ -228,7 +305,7 @@ public sealed class MainWindow(
             return;
 
         ImGui.Spacing();
-        Widgets.SectionHeader($"Favorites · {config.Favorites.Count}");
+        Widgets.SectionHeader($"{Loc.T("Favorites", "Favoriten")} · {config.Favorites.Count}");
         ImGui.BeginChild("favorites", new Vector2(0, 0));
         foreach (var id in config.Favorites.ToList())
             DrawItemRow("fav", id, game.ItemName(id), game.ItemIcon(id), DutyCount(id));
@@ -252,28 +329,28 @@ public sealed class MainWindow(
     private void DrawImportButton()
     {
         ImGui.BeginDisabled(controller.IsRunning);
-        if (Widgets.IconButton("import", FontAwesomeIcon.FileImport, "Import a glamour set"))
+        if (Widgets.IconButton("import", FontAwesomeIcon.FileImport, Loc.T("Import a glamour set", "Glamour-Set importieren")))
             ImGui.OpenPopup("importmenu");
         ImGui.EndDisabled();
 
         if (!ImGui.BeginPopup("importmenu"))
             return;
 
-        if (ImGui.Selectable("From clipboard"))
-            Preview.Show("Clipboard", Importer.MatchAll(GlamourImport.Parse(ImGui.GetClipboardText())));
+        if (ImGui.Selectable(Loc.T("From clipboard", "Aus der Zwischenablage")))
+            Preview.Show(new LocText("Clipboard", "Zwischenablage"), Importer.MatchAll(GlamourImport.Parse(ImGui.GetClipboardText())));
 
-        ImGui.TextColored(Theme.Muted, "Eorzea Collection: open the glamour, press Ctrl+U,");
-        ImGui.TextColored(Theme.Muted, "then Ctrl+A and Ctrl+C. A list of item names works too.");
+        ImGui.TextColored(Theme.Muted, Loc.T("Eorzea Collection: open the glamour, press Ctrl+U,", "Eorzea Collection: Glamour öffnen, Strg+U drücken,"));
+        ImGui.TextColored(Theme.Muted, Loc.T("then Ctrl+A and Ctrl+C. A list of item names works too.", "dann Strg+A und Strg+C. Eine Liste mit Itemnamen geht auch."));
 
         ImGui.Separator();
         var inspected = InspectImport.WindowOpen ? InspectImport.ItemIds() : [];
         ImGui.BeginDisabled(inspected.Count == 0);
-        if (ImGui.Selectable("From inspected character"))
-            Preview.Show("Inspected character", [.. inspected.Select(id => new ImportResult(new ImportEntry(game.ItemName(id), game.ItemIcon(id)), id))]);
+        if (ImGui.Selectable(Loc.T("From inspected character", "Vom betrachteten Charakter")))
+            Preview.Show(new LocText("Inspected character", "Betrachteter Charakter"), [.. inspected.Select(id => new ImportResult(new ImportEntry(game.ItemName(id), game.ItemIcon(id)), id))]);
         ImGui.EndDisabled();
 
         if (inspected.Count == 0)
-            ImGui.TextColored(Theme.Muted, "Inspect a character in game first.");
+            ImGui.TextColored(Theme.Muted, Loc.T("Inspect a character in game first.", "Betrachte zuerst im Spiel einen Charakter."));
 
         ImGui.EndPopup();
     }
@@ -282,9 +359,9 @@ public sealed class MainWindow(
     {
         if (search.Length < 2)
         {
-            ImGui.TextColored(Theme.Muted, "Type at least two letters.");
+            ImGui.TextColored(Theme.Muted, Loc.T("Type at least two letters.", "Gib mindestens zwei Buchstaben ein."));
             if (config.Favorites.Count == 0)
-                ImGui.TextColored(Theme.Muted, "Right-click an item to add it to your favorites.");
+                ImGui.TextColored(Theme.Muted, Loc.T("Right-click an item to add it to your favorites.", "Rechtsklick auf ein Item fügt es den Favoriten hinzu."));
             return;
         }
 
@@ -323,9 +400,9 @@ public sealed class MainWindow(
         Widgets.GameIconAt(start + new Vector2(2, 2), icon, 28);
         draw.AddText(start + new Vector2(38, 1), Theme.U32(Theme.Text), name);
 
-        var info = duties == 1 ? "1 duty" : $"{duties} duties";
+        var info = duties == 1 ? Loc.T("1 duty", "1 Duty") : Loc.T($"{duties} duties", $"{duties} Duties");
         if (config.Favorites.Contains(id) && scope != "fav")
-            info += " · favorite";
+            info += Loc.T(" · favorite", " · Favorit");
         draw.AddText(start + new Vector2(38, 16), Theme.U32(Theme.Muted), info);
     }
 
@@ -337,7 +414,7 @@ public sealed class MainWindow(
 
         var inList = farmList.Any(i => i.ItemId == id);
         ImGui.BeginDisabled(controller.IsRunning);
-        if (ImGui.Selectable(inList ? "Remove from farm list" : "Add to farm list"))
+        if (ImGui.Selectable(inList ? Loc.T("Remove from farm list", "Von der Farmliste entfernen") : Loc.T("Add to farm list", "Zur Farmliste hinzufügen")))
         {
             if (inList)
                 Remove(id);
@@ -347,7 +424,7 @@ public sealed class MainWindow(
         ImGui.EndDisabled();
 
         var favorite = config.Favorites.Contains(id);
-        if (ImGui.Selectable(favorite ? "Remove from favorites" : "Add to favorites"))
+        if (ImGui.Selectable(favorite ? Loc.T("Remove from favorites", "Aus den Favoriten entfernen") : Loc.T("Add to favorites", "Zu den Favoriten hinzufügen")))
         {
             if (favorite)
                 config.Favorites.Remove(id);
@@ -356,13 +433,13 @@ public sealed class MainWindow(
             save();
         }
 
-        if (ImGui.Selectable("Try on"))
+        if (ImGui.Selectable(Loc.T("Try on", "Anprobieren")))
             tryOn(id);
 
         if (fromHistory)
         {
             ImGui.Separator();
-            if (ImGui.Selectable("Remove from history"))
+            if (ImGui.Selectable(Loc.T("Remove from history", "Aus dem Verlauf entfernen")))
                 history.Remove(id);
         }
     }
@@ -370,11 +447,11 @@ public sealed class MainWindow(
     private void DrawHistory()
     {
         var entries = history.Entries;
-        Widgets.SectionHeader($"History · {entries.Count}");
+        Widgets.SectionHeader($"{Loc.T("History", "Verlauf")} · {entries.Count}");
 
         if (entries.Count == 0)
         {
-            ImGui.TextColored(Theme.Muted, "Everything you farm with EnGlam shows up here, with runs and whether you got it.");
+            ImGui.TextColored(Theme.Muted, Loc.T("Everything you farm with EnGlam shows up here, with runs and whether you got it.", "Alles, was du mit EnGlam farmst, erscheint hier, mit Runs und ob du es bekommen hast."));
             return;
         }
 
@@ -383,9 +460,9 @@ public sealed class MainWindow(
 
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("Runs", ImGuiTableColumnFlags.WidthFixed, 50);
-        ImGui.TableSetupColumn("Sessions", ImGuiTableColumnFlags.WidthFixed, 70);
-        ImGui.TableSetupColumn("State", ImGuiTableColumnFlags.WidthFixed, 170);
-        ImGui.TableSetupColumn("Last farmed", ImGuiTableColumnFlags.WidthFixed, 120);
+        ImGui.TableSetupColumn(Loc.T("Sessions", "Sitzungen"), ImGuiTableColumnFlags.WidthFixed, 84);
+        ImGui.TableSetupColumn(Loc.T("State", "Status"), ImGuiTableColumnFlags.WidthFixed, 170);
+        ImGui.TableSetupColumn(Loc.T("Last farmed", "Zuletzt gefarmt"), ImGuiTableColumnFlags.WidthFixed, 140);
         ImGui.TableHeadersRow();
 
         foreach (var entry in entries)
@@ -412,9 +489,9 @@ public sealed class MainWindow(
             ImGui.TextUnformatted(entry.Sessions.ToString());
             ImGui.TableNextColumn();
             if (entry.State == HistoryState.Obtained)
-                ImGui.TextColored(Theme.Success, $"obtained {entry.ObtainedAt:dd.MM.yyyy}");
+                ImGui.TextColored(Theme.Success, Loc.T($"obtained {entry.ObtainedAt:dd.MM.yyyy}", $"erhalten {entry.ObtainedAt:dd.MM.yyyy}"));
             else
-                ImGui.TextColored(Theme.Warning, "open");
+                ImGui.TextColored(Theme.Warning, Loc.T("open", "offen"));
             ImGui.TableNextColumn();
             ImGui.TextColored(Theme.Muted, entry.LastFarmed.ToString("dd.MM.yyyy HH:mm"));
         }
@@ -426,12 +503,12 @@ public sealed class MainWindow(
 
     private void DrawFarmList()
     {
-        Widgets.SectionHeader($"Farm list · {farmList.Count}");
+        Widgets.SectionHeader($"{Loc.T("Farm list", "Farmliste")} · {farmList.Count}");
 
         if (selectedItem != 0 && !farmList.Any(i => i.ItemId == selectedItem))
         {
             ImGui.BeginDisabled(controller.IsRunning);
-            if (ImGui.Button($"Add {game.ItemName(selectedItem)} to the list"))
+            if (ImGui.Button(Loc.T($"Add {game.ItemName(selectedItem)} to the list", $"{game.ItemName(selectedItem)} zur Liste hinzufügen")))
                 Add(selectedItem);
             ImGui.EndDisabled();
             ImGui.Spacing();
@@ -439,7 +516,7 @@ public sealed class MainWindow(
 
         if (farmList.Count == 0)
         {
-            ImGui.TextColored(Theme.Muted, "Search for an item on the left and add it here.");
+            ImGui.TextColored(Theme.Muted, Loc.T("Search for an item on the left and add it here.", "Suche links ein Item und füge es hier hinzu."));
             ImGui.Spacing();
             return;
         }
@@ -475,7 +552,7 @@ public sealed class MainWindow(
                 if (!controller.IsRunning)
                 {
                     ImGui.SetCursorScreenPos(new Vector2(right - trashWidth, origin.Y - 4));
-                    if (Widgets.IconButton($"rm{item.ItemId}", FontAwesomeIcon.Trash, "Remove from list"))
+                    if (Widgets.IconButton($"rm{item.ItemId}", FontAwesomeIcon.Trash, Loc.T("Remove from list", "Aus der Liste entfernen")))
                         remove = item;
                 }
 
@@ -522,24 +599,30 @@ public sealed class MainWindow(
             return;
 
         ImGui.Spacing();
-        Widgets.SectionHeader($"Sources · {game.ItemName(selectedItem)}");
+        Widgets.SectionHeader($"{Loc.T("Sources", "Quellen")} · {game.ItemName(selectedItem)}");
 
         var result = planner.Plan(selectedItem, env.Context);
         if (result.CanFarm)
-            ImGui.TextColored(Theme.AccentLight,
-                $"Farms {result.Duty!.Name} as {result.Mode}{(env.Context.Unsynced ? ", unsynced" : "")} ({Chance(result.Chance)})");
+        {
+            var unsynced = env.Context.Unsynced;
+            ImGui.TextColored(Theme.AccentLight, Loc.T(
+                $"Farms {result.Duty!.Name} as {result.Mode}{(unsynced ? ", unsynced" : "")} ({Chance(result.Chance)})",
+                $"Farmt {result.Duty!.Name} als {result.Mode}{(unsynced ? ", ohne Sync" : "")} ({Chance(result.Chance)})"));
+        }
         else
-            ImGui.TextColored(Theme.Warning, $"Can't be farmed right now: {ReasonText(result.Reason)}");
+        {
+            ImGui.TextColored(Theme.Warning, Loc.T($"Can't be farmed right now: {ReasonText(result.Reason).En}", $"Lässt sich gerade nicht farmen: {ReasonText(result.Reason).De}"));
+        }
 
         if (!ImGui.BeginTable("sources", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.PadOuterX))
             return;
 
         ImGui.TableSetupColumn("Duty", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("Kind", ImGuiTableColumnFlags.WidthFixed, 80);
-        ImGui.TableSetupColumn("Chance", ImGuiTableColumnFlags.WidthFixed, 70);
+        ImGui.TableSetupColumn(Loc.T("Kind", "Art"), ImGuiTableColumnFlags.WidthFixed, 90);
+        ImGui.TableSetupColumn("Chance", ImGuiTableColumnFlags.WidthFixed, 80);
         ImGui.TableSetupColumn("Lv", ImGuiTableColumnFlags.WidthFixed, 30);
-        ImGui.TableSetupColumn("Ready", ImGuiTableColumnFlags.WidthFixed, 110);
-        ImGui.TableSetupColumn("Modes", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn(Loc.T("Ready", "Bereit"), ImGuiTableColumnFlags.WidthFixed, 150);
+        ImGui.TableSetupColumn(Loc.T("Modes", "Modi"), ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableHeadersRow();
 
         foreach (var source in drops.SourcesFor(selectedItem))
@@ -548,7 +631,7 @@ public sealed class MainWindow(
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            ImGui.TextUnformatted(duty?.Name ?? $"Unknown duty {source.ContentFinderConditionId}");
+            ImGui.TextUnformatted(duty?.Name ?? Loc.T($"Unknown duty {source.ContentFinderConditionId}", $"Unbekannte Duty {source.ContentFinderConditionId}"));
             ImGui.TableNextColumn();
             ImGui.TextColored(Theme.Muted, KindText(source.Kind));
             ImGui.TableNextColumn();
@@ -559,11 +642,11 @@ public sealed class MainWindow(
             if (duty is null)
                 ImGui.TextColored(Theme.Muted, "-");
             else if (!GameData.IsUnlocked(duty))
-                ImGui.TextColored(Theme.Warning, "locked");
+                ImGui.TextColored(Theme.Warning, Loc.T("locked", "gesperrt"));
             else if (!autoDuty.HasPath(duty.TerritoryType))
-                ImGui.TextColored(Theme.Warning, "no AutoDuty path");
+                ImGui.TextColored(Theme.Warning, Loc.T("no AutoDuty path", "kein AutoDuty-Pfad"));
             else
-                ImGui.TextColored(Theme.Success, "ready");
+                ImGui.TextColored(Theme.Success, Loc.T("ready", "bereit"));
             ImGui.TableNextColumn();
             ImGui.TextColored(Theme.Muted, duty is null ? "-" : DutyModeRules.ModesFor(duty).ToString());
         }
@@ -574,14 +657,14 @@ public sealed class MainWindow(
     private void DrawSettings()
     {
         ImGui.Spacing();
-        Widgets.SectionHeader("Settings");
+        Widgets.SectionHeader(Loc.T("Settings", "Einstellungen"));
 
         ImGui.BeginDisabled(controller.IsRunning);
         Widgets.Card("settings", width =>
         {
             var half = (width - 32) / 2;
 
-            ImGui.TextColored(Theme.Muted, "Party");
+            ImGui.TextColored(Theme.Muted, Loc.T("Party", "Gruppe"));
             var party = config.Party;
             if (Widgets.Segmented("party", Parties, PartyLabel, ref party, width))
             {
@@ -600,8 +683,10 @@ public sealed class MainWindow(
             ImGui.TableNextColumn();
             var unsynced = config.Unsynced;
             ImGui.BeginDisabled(config.Party != Party.DutyFinder);
-            if (Widgets.ToggleRow("Unsynced", ref unsynced, half,
-                    config.Party == Party.DutyFinder ? "Run duties unsynced. Not possible for Dawntrail duties." : "NPC parties are always synced."))
+            if (Widgets.ToggleRow(Loc.T("Unsynced", "Ohne Sync"), ref unsynced, half,
+                    config.Party == Party.DutyFinder
+                        ? Loc.T("Run duties unsynced. Not possible for Dawntrail duties.", "Duties ohne Level-Sync laufen. Bei Dawntrail-Duties nicht möglich.")
+                        : Loc.T("NPC parties are always synced.", "NPC-Gruppen sind immer gesynct.")))
             {
                 config.Unsynced = unsynced;
                 save();
@@ -610,8 +695,9 @@ public sealed class MainWindow(
 
             ImGui.TableNextColumn();
             var pass = config.PassOthers;
-            if (Widgets.ToggleRow("Pass other loot", ref pass, half,
-                    "In groups with other players, roll Pass on everything that isn't on the farm list."))
+            if (Widgets.ToggleRow(Loc.T("Pass other loot", "Bei fremdem Loot passen"), ref pass, half,
+                    Loc.T("In groups with other players, roll Pass on everything that isn't on the farm list.",
+                        "Passt in Gruppen mit anderen Spielern bei allem, was nicht auf der Farmliste steht.")))
             {
                 config.PassOthers = pass;
                 save();
@@ -639,7 +725,8 @@ public sealed class MainWindow(
 
             ImGui.TableNextColumn();
             var bare = config.BareMode;
-            if (Widgets.ToggleRow("Bare mode", ref bare, half, "AutoDuty skips its extras during the run, like Questionable does."))
+            if (Widgets.ToggleRow("Bare Mode", ref bare, half,
+                    Loc.T("AutoDuty skips its extras during the run, like Questionable does.", "AutoDuty lässt im Run seine Extras weg, so wie Questionable es macht.")))
             {
                 config.BareMode = bare;
                 save();
@@ -647,9 +734,9 @@ public sealed class MainWindow(
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            NumberRow("Runs per item", config.MaxRunsPerItem, 1, 999, v => config.MaxRunsPerItem = v, half);
+            NumberRow(Loc.T("Runs per item", "Runs pro Item"), config.MaxRunsPerItem, 1, 999, v => config.MaxRunsPerItem = v, half);
             ImGui.TableNextColumn();
-            NumberRow("Runs per session", config.MaxRunsPerSession, 1, 9999, v => config.MaxRunsPerSession = v, half);
+            NumberRow(Loc.T("Runs per session", "Runs pro Sitzung"), config.MaxRunsPerSession, 1, 9999, v => config.MaxRunsPerSession = v, half);
 
             ImGui.EndTable();
         });
@@ -659,8 +746,9 @@ public sealed class MainWindow(
         Widgets.Card("diagnostics", width =>
         {
             var diagnostics = config.ShowDiagnostics;
-            if (Widgets.ToggleRow("Diagnostics", ref diagnostics, width,
-                    "Show the draw time of this window in the status line and write it to the log every 10 seconds."))
+            if (Widgets.ToggleRow(Loc.T("Diagnostics", "Diagnose"), ref diagnostics, width,
+                    Loc.T("Show the draw time of this window in the status line and write it to the log every 10 seconds.",
+                        "Zeigt die Zeichenzeit dieses Fensters in der Statuszeile und schreibt sie alle 10 Sekunden ins Log.")))
             {
                 config.ShowDiagnostics = diagnostics;
                 save();
@@ -698,11 +786,11 @@ public sealed class MainWindow(
     }
 
     private string? MissingRequirement() =>
-        !autoDuty.IsLoaded ? "AutoDuty isn't loaded."
+        !autoDuty.IsLoaded ? Loc.T("AutoDuty isn't loaded.", "AutoDuty ist nicht geladen.")
         : env.RotationAvailable ? null
         : config.Rotation is RotationChoice.AutoDutySetting or RotationChoice.All
-            ? "No rotation plugin loaded (Boss Mod, Wrath Combo or Rotation Solver Reborn)."
-            : $"{RotationLabel(config.Rotation)} isn't loaded.";
+            ? Loc.T("No rotation plugin loaded (Boss Mod, Wrath Combo or Rotation Solver Reborn).", "Kein Rotation-Plugin geladen (Boss Mod, Wrath Combo oder Rotation Solver Reborn).")
+            : Loc.T($"{RotationLabel(config.Rotation)} isn't loaded.", $"{RotationLabel(config.Rotation)} ist nicht geladen.");
 
     private string DetailLine(FarmItem item, PlanResult? plan, bool manual)
     {
@@ -710,19 +798,19 @@ public sealed class MainWindow(
             return ManualText(item.ItemId);
 
         if (item.State == FarmItemState.Skipped)
-            return ReasonText(item.SkipReason);
+            return ReasonText(item.SkipReason).ToString();
 
         var duty = item.DutyName;
         if (duty is null)
         {
             plan ??= planner.Plan(item.ItemId, env.Context);
             if (!plan.CanFarm)
-                return ReasonText(plan.Reason);
+                return ReasonText(plan.Reason).ToString();
 
-            duty = $"{plan.Duty!.Name} · {plan.Mode}{(env.Context.Unsynced ? " · unsynced" : "")}";
+            duty = $"{plan.Duty!.Name} · {plan.Mode}{(env.Context.Unsynced ? Loc.T(" · unsynced", " · ohne Sync") : "")}";
         }
 
-        return item.Runs > 0 ? $"{duty} · run {item.Runs}/{config.MaxRunsPerItem}" : duty;
+        return item.Runs > 0 ? $"{duty} · {Loc.T("run", "Run")} {item.Runs}/{config.MaxRunsPerItem}" : duty;
     }
 
     /// <summary>Die Duties ohne AutoDuty-Pfad, in denen das Item droppt, für die Detailzeile.</summary>
@@ -737,43 +825,43 @@ public sealed class MainWindow(
 
         return duties.Count switch
         {
-            0 => "No AutoDuty path. Run it yourself.",
-            1 => $"No AutoDuty path. Run {duties[0]} yourself.",
-            _ => $"No AutoDuty path. Run {duties[0]} (+{duties.Count - 1} more) yourself.",
+            0 => Loc.T("No AutoDuty path. Run it yourself.", "Kein AutoDuty-Pfad. Lauf es selbst."),
+            1 => Loc.T($"No AutoDuty path. Run {duties[0]} yourself.", $"Kein AutoDuty-Pfad. Lauf {duties[0]} selbst."),
+            _ => Loc.T($"No AutoDuty path. Run {duties[0]} (+{duties.Count - 1} more) yourself.", $"Kein AutoDuty-Pfad. Lauf {duties[0]} (+{duties.Count - 1} weitere) selbst."),
         };
     }
 
     private static (string Text, Vector4 Border, Vector4 Color) StatePill(FarmItem item, bool manual) => manual
-        ? ("farm yourself", Theme.WarningBorder, Theme.Warning)
+        ? (Loc.T("farm yourself", "selbst farmen"), Theme.WarningBorder, Theme.Warning)
         : item.State switch
     {
-        FarmItemState.Running => ("running", Theme.Accent, Theme.AccentLight),
-        FarmItemState.Obtained => ("obtained", Theme.SuccessBorder, Theme.Success),
-        FarmItemState.AlreadyOwned => ("already owned", Theme.SuccessBorder, Theme.Success),
-        FarmItemState.Skipped => ("skipped", Theme.WarningBorder, Theme.Warning),
-        FarmItemState.LimitReached => ("limit reached", Theme.WarningBorder, Theme.Warning),
-        FarmItemState.Failed => ("failed", Theme.DangerBorder, Theme.Danger),
-        _ => ("waiting", Theme.Border, Theme.Muted),
+        FarmItemState.Running => (Loc.T("running", "läuft"), Theme.Accent, Theme.AccentLight),
+        FarmItemState.Obtained => (Loc.T("obtained", "erhalten"), Theme.SuccessBorder, Theme.Success),
+        FarmItemState.AlreadyOwned => (Loc.T("already owned", "schon vorhanden"), Theme.SuccessBorder, Theme.Success),
+        FarmItemState.Skipped => (Loc.T("skipped", "übersprungen"), Theme.WarningBorder, Theme.Warning),
+        FarmItemState.LimitReached => (Loc.T("limit reached", "Limit erreicht"), Theme.WarningBorder, Theme.Warning),
+        FarmItemState.Failed => (Loc.T("failed", "fehlgeschlagen"), Theme.DangerBorder, Theme.Danger),
+        _ => (Loc.T("waiting", "wartet"), Theme.Border, Theme.Muted),
     };
 
-    internal static string ReasonText(SkipReason? reason) => reason switch
+    internal static LocText ReasonText(SkipReason? reason) => reason switch
     {
-        SkipReason.NoSource => "No known dungeon drops this item.",
-        SkipReason.NoDutyData => "The duty isn't in the game data.",
-        SkipReason.ModeNotAvailable => "No source can be run with this party.",
-        SkipReason.UnsyncNotPossible => "Can't run unsynced (Dawntrail or NPC party).",
-        SkipReason.NoPath => "AutoDuty has no path for the duty.",
-        SkipReason.Locked => "Duty locked.",
-        SkipReason.LevelTooLow => "Your level is too low.",
-        _ => "Unknown reason.",
+        SkipReason.NoSource => new("No known dungeon drops this item.", "Kein bekannter Dungeon liefert dieses Item."),
+        SkipReason.NoDutyData => new("The duty isn't in the game data.", "Die Duty steht nicht in den Spieldaten."),
+        SkipReason.ModeNotAvailable => new("No source can be run with this party.", "Keine Quelle lässt sich mit dieser Gruppe laufen."),
+        SkipReason.UnsyncNotPossible => new("Can't run unsynced (Dawntrail or NPC party).", "Ohne Sync nicht möglich (Dawntrail oder NPC-Gruppe)."),
+        SkipReason.NoPath => new("AutoDuty has no path for the duty.", "AutoDuty hat keinen Pfad für die Duty."),
+        SkipReason.Locked => new("Duty locked.", "Duty gesperrt."),
+        SkipReason.LevelTooLow => new("Your level is too low.", "Dein Level ist zu niedrig."),
+        _ => new("Unknown reason.", "Unbekannter Grund."),
     };
 
     private static string KindText(DropKind kind) => kind switch
     {
-        DropKind.Boss => "boss",
-        DropKind.BossChest => "boss chest",
-        DropKind.Chest => "chest",
-        _ => "other",
+        DropKind.Boss => Loc.T("boss", "Boss"),
+        DropKind.BossChest => Loc.T("boss chest", "Bosstruhe"),
+        DropKind.Chest => Loc.T("chest", "Truhe"),
+        _ => Loc.T("other", "Sonstige"),
     };
 
     private static string PartyLabel(Party p) => p switch
@@ -785,13 +873,13 @@ public sealed class MainWindow(
 
     private static string RotationLabel(RotationChoice r) => r switch
     {
-        RotationChoice.AutoDutySetting => "AutoDuty setting",
+        RotationChoice.AutoDutySetting => Loc.T("AutoDuty setting", "AutoDuty-Einstellung"),
         RotationChoice.BossMod => "Boss Mod",
         RotationChoice.WrathCombo => "Wrath Combo",
         RotationChoice.RotationSolverReborn => "Rotation Solver Reborn",
-        RotationChoice.All => "All (AutoDuty picks)",
+        RotationChoice.All => Loc.T("All (AutoDuty picks)", "Alle (AutoDuty wählt)"),
         _ => r.ToString(),
     };
 
-    private static string Chance(decimal? chance) => chance is { } c ? $"{c:0.##} %" : "unknown";
+    private static string Chance(decimal? chance) => chance is { } c ? $"{c:0.##} %" : Loc.T("unknown", "unbekannt");
 }
