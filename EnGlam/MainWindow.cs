@@ -29,6 +29,7 @@ public sealed class MainWindow(
     Action<uint> tryOn,
     FarmHistory history,
     Dependencies dependencies,
+    AboutInfo about,
     Dalamud.Plugin.Services.IPluginLog log)
 {
     private static readonly Party[] Parties = Enum.GetValues<Party>();
@@ -51,7 +52,7 @@ public sealed class MainWindow(
         timing.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started));
     }
 
-    private readonly FrameTiming timing = new(log);
+    private readonly FrameTiming timing = new(log, "Draw", TimeSpan.FromSeconds(5), () => config.ShowDiagnostics);
 
     private void DrawWindow()
     {
@@ -94,15 +95,21 @@ public sealed class MainWindow(
                 ImGui.EndChild();
                 break;
 
-            case Tab.Dependencies:
-                ImGui.BeginChild("dependencies", new Vector2(0, 0));
-                DrawDependencies();
-                ImGui.EndChild();
-                break;
-
             case Tab.Settings:
                 ImGui.BeginChild("settings", new Vector2(0, 0));
                 DrawSettings();
+                ImGui.EndChild();
+                break;
+
+            case Tab.Dependencies:
+                ImGui.BeginChild("dependencies", new Vector2(0, 0));
+                DependenciesView.Draw(dependencies);
+                ImGui.EndChild();
+                break;
+
+            case Tab.About:
+                ImGui.BeginChild("about", new Vector2(0, 0));
+                AboutView.Draw(about);
                 ImGui.EndChild();
                 break;
         }
@@ -111,14 +118,15 @@ public sealed class MainWindow(
         ImGui.End();
     }
 
-    private enum Tab { Farm, History, Dependencies, Settings }
+    private enum Tab { Farm, History, Settings, Dependencies, About }
 
     private static readonly (FontAwesomeIcon Icon, string Label)[] Tabs =
     [
         (FontAwesomeIcon.Tshirt, "Farm"),
         (FontAwesomeIcon.History, "History"),
-        (FontAwesomeIcon.PuzzlePiece, "Dependencies"),
         (FontAwesomeIcon.Cog, "Settings"),
+        (FontAwesomeIcon.PuzzlePiece, "Dependencies"),
+        (FontAwesomeIcon.InfoCircle, "About"),
     ];
 
     private int tab;
@@ -183,7 +191,17 @@ public sealed class MainWindow(
             status += $" · settings waiting to be restored: {guard.Pending.Count}";
         if (missing is not null && !controller.IsRunning)
             status += $" · {missing}";
+        var statusStart = ImGui.GetCursorPosX();
         ImGui.TextColored(Theme.Muted, status);
+
+        if (config.ShowDiagnostics)
+        {
+            // Rechtsbündig, aber nie über den Statustext hinweg.
+            var timingText = timing.Summary();
+            ImGui.SameLine(Math.Max(statusStart + ImGui.CalcTextSize(status).X + ImGui.GetStyle().ItemSpacing.X * 2,
+                ImGui.GetContentRegionMax().X - ImGui.CalcTextSize(timingText).X));
+            ImGui.TextColored(Theme.Muted, timingText);
+        }
     }
 
     private void DrawSearch()
@@ -348,92 +366,6 @@ public sealed class MainWindow(
                 history.Remove(id);
         }
     }
-
-    private void DrawDependencies()
-    {
-        DrawDependencyGroup(DependencyGroup.Required, "Required");
-
-        var rotationLoaded = Dependencies.All.Count(d => d.Group == DependencyGroup.Rotation && dependencies.StateOf(d).State == InstallState.Loaded);
-        ImGui.Spacing();
-        DrawDependencyGroup(DependencyGroup.Rotation, $"Rotation · at least one · {rotationLoaded} loaded");
-
-        ImGui.Spacing();
-        DrawDependencyGroup(DependencyGroup.Conflict, "Conflicts");
-
-        ImGui.Spacing();
-        ImGui.TextColored(Theme.Muted, "Install adds the plugin's repository to Dalamud if it's missing and installs from there.");
-    }
-
-    private void DrawDependencyGroup(DependencyGroup group, string title)
-    {
-        Widgets.SectionHeader(title);
-
-        foreach (var dependency in Dependencies.All.Where(d => d.Group == group))
-        {
-            var (state, version) = dependencies.StateOf(dependency);
-            dependencies.Messages.TryGetValue(dependency.InternalName, out var message);
-
-            Widgets.Card($"dep{dependency.InternalName}", innerWidth =>
-            {
-                var origin = ImGui.GetCursorScreenPos();
-                var right = origin.X + innerWidth;
-
-                var (icon, color) = (group, state) switch
-                {
-                    (DependencyGroup.Conflict, InstallState.Loaded) => (FontAwesomeIcon.ExclamationTriangle, Theme.Warning),
-                    (DependencyGroup.Conflict, _) => (FontAwesomeIcon.Check, Theme.Success),
-                    (_, InstallState.Loaded) => (FontAwesomeIcon.Check, Theme.Success),
-                    (_, InstallState.Installed) => (FontAwesomeIcon.PowerOff, Theme.Warning),
-                    _ => (FontAwesomeIcon.Times, Theme.Danger),
-                };
-
-                ImGui.SetCursorScreenPos(origin + new Vector2(2, 1));
-                Widgets.Icon(icon, color);
-
-                ImGui.SetCursorScreenPos(origin + new Vector2(28, 0));
-                ImGui.TextUnformatted(version is null ? dependency.DisplayName : $"{dependency.DisplayName} v{version}");
-                ImGui.SameLine();
-                ImGui.TextColored(color, StateText(group, state));
-
-                ImGui.SetCursorScreenPos(origin + new Vector2(28, ImGui.GetTextLineHeight() + 4));
-                ImGui.TextColored(Theme.Muted, message ?? dependency.Purpose);
-
-                // Knöpfe rechtsbündig in der ersten Zeile.
-                var buttons = new List<(string Label, Action Click)> { ("Website", () => Dalamud.Utility.Util.OpenLink(dependency.Website)) };
-                if (group != DependencyGroup.Conflict && state != InstallState.Loaded && dependency.Repositories.Length > 0)
-                    buttons.Insert(0, (state == InstallState.Installed ? "Open installer" : "Install", () => dependencies.Install(dependency)));
-
-                var x = right;
-                foreach (var (label, _) in buttons)
-                    x -= ImGui.CalcTextSize(label).X + ImGui.GetStyle().FramePadding.X * 2 + 6;
-
-                ImGui.SetCursorScreenPos(new Vector2(x, origin.Y - 3));
-                foreach (var (label, click) in buttons)
-                {
-                    var busy = label == "Install" && dependencies.IsInstalling(dependency);
-                    ImGui.BeginDisabled(busy);
-                    if (ImGui.Button($"{label}##{dependency.InternalName}"))
-                        click();
-                    ImGui.EndDisabled();
-                    ImGui.SameLine(0, 6);
-                }
-
-                ImGui.SetCursorScreenPos(new Vector2(origin.X, origin.Y + ImGui.GetTextLineHeight() * 2 + 6));
-                ImGui.Dummy(new Vector2(innerWidth, 0));
-            });
-
-            ImGui.Spacing();
-        }
-    }
-
-    private static string StateText(DependencyGroup group, InstallState state) => (group, state) switch
-    {
-        (DependencyGroup.Conflict, InstallState.Loaded) => "loaded",
-        (DependencyGroup.Conflict, _) => "not loaded",
-        (_, InstallState.Loaded) => "loaded",
-        (_, InstallState.Installed) => "installed, turned off",
-        _ => "missing",
-    };
 
     private void DrawHistory()
     {
@@ -722,6 +654,18 @@ public sealed class MainWindow(
             ImGui.EndTable();
         });
         ImGui.EndDisabled();
+
+        ImGui.Spacing();
+        Widgets.Card("diagnostics", width =>
+        {
+            var diagnostics = config.ShowDiagnostics;
+            if (Widgets.ToggleRow("Diagnostics", ref diagnostics, width,
+                    "Show the draw time of this window in the status line and write it to the log every 10 seconds."))
+            {
+                config.ShowDiagnostics = diagnostics;
+                save();
+            }
+        });
     }
 
     private void NumberRow(string label, int value, int min, int max, Action<int> set, float width)

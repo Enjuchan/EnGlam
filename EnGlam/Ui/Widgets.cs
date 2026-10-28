@@ -1,7 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Textures;
+using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
 
 namespace EnGlam.Ui;
@@ -13,8 +16,11 @@ public static class Widgets
 
     public static void Init(ITextureProvider textureProvider) => textures = textureProvider;
 
-    /// <summary>Überschrift mit kurzer Linie davor und Linie bis zum Rand.</summary>
-    public static void SectionHeader(string label)
+    /// <summary>
+    /// Überschrift mit kurzer Linie davor und Linie bis zum Rand. Mit <paramref name="help"/> steht rechts ein
+    /// Fragezeichen, das die Erklärung beim Überfahren zeigt.
+    /// </summary>
+    public static void SectionHeader(string label, string? help = null)
     {
         var draw = ImGui.GetWindowDrawList();
         var pos = ImGui.GetCursorScreenPos();
@@ -24,9 +30,31 @@ public static class Widgets
         var y = pos.Y + size.Y / 2;
         var line = Theme.U32(Theme.Border);
 
+        var iconText = FontAwesomeIcon.QuestionCircle.ToIconString();
+        var iconSize = Vector2.Zero;
+        if (help is not null)
+        {
+            ImGui.PushFont(UiBuilder.IconFont);
+            iconSize = ImGui.CalcTextSize(iconText);
+            ImGui.PopFont();
+        }
+
+        var lineEnd = pos.X + width - (help is null ? 0 : iconSize.X + 8);
         draw.AddLine(new Vector2(pos.X, y), new Vector2(pos.X + 14, y), line, 1f);
         draw.AddText(new Vector2(pos.X + 22, pos.Y), Theme.U32(Theme.AccentLight), text);
-        draw.AddLine(new Vector2(pos.X + 30 + size.X, y), new Vector2(pos.X + width, y), line, 1f);
+        draw.AddLine(new Vector2(pos.X + 30 + size.X, y), new Vector2(lineEnd, y), line, 1f);
+
+        if (help is not null)
+        {
+            var iconPos = new Vector2(pos.X + width - iconSize.X, pos.Y + (size.Y - iconSize.Y) / 2);
+            var hovered = ImGui.IsWindowHovered() && ImGui.IsMouseHoveringRect(iconPos, iconPos + iconSize);
+            ImGui.PushFont(UiBuilder.IconFont);
+            draw.AddText(iconPos, Theme.U32(hovered ? Theme.AccentLight : Theme.Muted), iconText);
+            ImGui.PopFont();
+            if (hovered)
+                ImGui.SetTooltip(help);
+        }
+
         ImGui.Dummy(new Vector2(width, size.Y + 4));
     }
 
@@ -194,6 +222,66 @@ public static class Widgets
         return changed;
     }
 
+    /// <summary>
+    /// Wie <see cref="PillTabs"/>, aber nur mit Icon; die Bezeichnung steht im Tooltip. Für die Kompaktansicht.
+    /// </summary>
+    public static bool IconTabs(string id, IReadOnlyList<(FontAwesomeIcon Icon, string Tooltip)> tabs, ref int selected)
+    {
+        var draw = ImGui.GetWindowDrawList();
+        var start = ImGui.GetCursorScreenPos();
+        var height = ImGui.GetFrameHeight();
+        var gap = ImGui.GetStyle().ItemSpacing.X;
+        var x = start.X;
+        var changed = false;
+
+        for (var i = 0; i < tabs.Count; i++)
+        {
+            var (icon, tooltip) = tabs[i];
+            var iconText = icon.ToIconString();
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            var iconSize = ImGui.CalcTextSize(iconText);
+            ImGui.PopFont();
+
+            var size = new Vector2(iconSize.X + 24, height);
+            var min = new Vector2(x, start.Y);
+            var max = min + size;
+
+            ImGui.SetCursorScreenPos(min);
+            if (ImGui.InvisibleButton($"{id}{i}", size) && selected != i)
+            {
+                selected = i;
+                changed = true;
+            }
+
+            var active = selected == i;
+            var hovered = ImGui.IsItemHovered();
+
+            if (hovered)
+                ImGui.SetTooltip(tooltip);
+
+            if (active)
+                draw.AddRectFilled(min, max, Theme.U32(Theme.Accent), height / 2);
+            else
+            {
+                if (hovered)
+                    draw.AddRectFilled(min, max, Theme.U32(Theme.Hover), height / 2);
+                draw.AddRect(min, max, Theme.U32(hovered ? Theme.AccentLight : Theme.Border), height / 2, ImDrawFlags.None, 1f);
+            }
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            draw.AddText(new Vector2(min.X + 12, min.Y + (height - iconSize.Y) / 2),
+                Theme.U32(active ? Theme.OnAccent : Theme.AccentLight), iconText);
+            ImGui.PopFont();
+
+            x += size.X + gap;
+        }
+
+        ImGui.SetCursorScreenPos(start);
+        ImGui.Dummy(new Vector2(x - gap - start.X, height));
+        return changed;
+    }
+
     /// <summary>Gefüllter Akzent-Knopf mit Icon; pro Ansicht nur einer.</summary>
     public static bool PrimaryButton(string label, FontAwesomeIcon icon, bool enabled = true)
     {
@@ -329,5 +417,157 @@ public static class Widgets
         ImGui.Dummy(end - start);
 
         return hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !ImGui.IsAnyItemHovered();
+    }
+
+    /// <summary>Skaliert eine feste Pixelgröße mit der globalen Dalamud-Skalierung.</summary>
+    public static float S(float px) => px * ImGuiHelpers.GlobalScale;
+
+    /// <summary>
+    /// Setzt das nächste Element in dieselbe Zeile, wenn es dort noch Platz hat, sonst in die nächste.
+    /// Für fließende Reihen aus Chips; <paramref name="first"/> wird beim ersten Element zurückgesetzt.
+    /// <paramref name="rightInset"/> hält Platz am rechten Rand frei, etwa den Innenabstand einer Karte.
+    /// </summary>
+    public static void Flow(ref bool first, float width, float rightInset = 0)
+    {
+        if (first)
+        {
+            first = false;
+            return;
+        }
+
+        var right = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMax().X - rightInset;
+        if (ImGui.GetItemRectMax().X + ImGui.GetStyle().ItemSpacing.X + width <= right)
+            ImGui.SameLine();
+    }
+
+    public static float ChipWidth(string label) => ImGui.CalcTextSize(label).X + 22;
+
+    /// <summary>Umschaltbare Pille für eine Auswahl aus vielen Einträgen. Gibt zurück, ob sie angeklickt wurde.</summary>
+    public static bool Chip(string id, string label, bool on, string? tooltip = null)
+    {
+        var draw = ImGui.GetWindowDrawList();
+        var pos = ImGui.GetCursorScreenPos();
+        var size = new Vector2(ChipWidth(label), ImGui.GetFrameHeight());
+        var clicked = ImGui.InvisibleButton($"##chip{id}", size);
+        var hovered = ImGui.IsItemHovered();
+        var radius = size.Y / 2;
+
+        if (on)
+        {
+            draw.AddRectFilled(pos, pos + size, Theme.U32(hovered ? Theme.AccentLight : Theme.Accent), radius);
+        }
+        else
+        {
+            if (hovered)
+                draw.AddRectFilled(pos, pos + size, Theme.U32(Theme.Hover), radius);
+            draw.AddRect(pos, pos + size, Theme.U32(Theme.Border), radius, ImDrawFlags.None, 1f);
+        }
+
+        var textY = pos.Y + (size.Y - ImGui.GetTextLineHeight()) / 2;
+        draw.AddText(new Vector2(pos.X + 11, textY), Theme.U32(on ? Theme.OnAccent : hovered ? Theme.Text : Theme.Muted), label);
+
+        if (tooltip is not null && hovered)
+            ImGui.SetTooltip(tooltip);
+
+        return clicked;
+    }
+
+    public static float TagChipWidth(string label, bool withIcon)
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        var cross = ImGui.CalcTextSize(FontAwesomeIcon.Times.ToIconString()).X;
+        ImGui.PopFont();
+        var icon = withIcon ? ImGui.GetFrameHeight() - 4 + 6 : 0;
+        return 10 + icon + ImGui.CalcTextSize(label).X + 8 + cross + 10;
+    }
+
+    /// <summary>
+    /// Eintrag einer Liste als Pille mit Entfernen-Kreuz, optional mit Spiel-Icon. Gibt zurück, ob das Kreuz
+    /// angeklickt wurde.
+    /// </summary>
+    public static bool TagChip(string id, string label, Vector4? textColor = null, uint gameIcon = 0, string? tooltip = null)
+    {
+        var draw = ImGui.GetWindowDrawList();
+        var pos = ImGui.GetCursorScreenPos();
+        var height = ImGui.GetFrameHeight();
+        var size = new Vector2(TagChipWidth(label, gameIcon != 0), height);
+        var radius = height / 2;
+
+        draw.AddRectFilled(pos, pos + size, Theme.U32(Theme.Hover), radius);
+        draw.AddRect(pos, pos + size, Theme.U32(Theme.Border), radius, ImDrawFlags.None, 1f);
+
+        var x = pos.X + 10;
+        if (gameIcon != 0)
+        {
+            var iconSize = height - 4;
+            GameIconAt(new Vector2(x - 6, pos.Y + 2), gameIcon, iconSize);
+            x += iconSize;
+        }
+
+        var textY = pos.Y + (height - ImGui.GetTextLineHeight()) / 2;
+        draw.AddText(new Vector2(x, textY), Theme.U32(textColor ?? Theme.Text), label);
+
+        ImGui.PushFont(UiBuilder.IconFont);
+        var crossText = FontAwesomeIcon.Times.ToIconString();
+        var crossSize = ImGui.CalcTextSize(crossText);
+        ImGui.PopFont();
+
+        var crossPos = new Vector2(pos.X + size.X - 10 - crossSize.X, pos.Y + (height - crossSize.Y) / 2);
+        ImGui.SetCursorScreenPos(new Vector2(pos.X, pos.Y));
+        ImGui.InvisibleButton($"##tagbody{id}", new Vector2(size.X - crossSize.X - 14, height));
+        if (tooltip is not null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        ImGui.SameLine(0, 0);
+        var removed = ImGui.InvisibleButton($"##tagx{id}", new Vector2(crossSize.X + 14, height));
+        var crossHovered = ImGui.IsItemHovered();
+
+        ImGui.PushFont(UiBuilder.IconFont);
+        draw.AddText(crossPos, Theme.U32(crossHovered ? Theme.Danger : Theme.Muted), crossText);
+        ImGui.PopFont();
+
+        if (crossHovered)
+            ImGui.SetTooltip("Remove");
+
+        return removed;
+    }
+
+    /// <summary>Kleines Fragezeichen, das beim Überfahren eine Erklärung zeigt.</summary>
+    public static void HelpIcon(string tooltip)
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        ImGui.TextColored(Theme.Muted, FontAwesomeIcon.QuestionCircle.ToIconString());
+        ImGui.PopFont();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+    }
+
+    /// <summary>
+    /// Icon-Knopf, der nur mit gedrückter Shift-Taste auslöst, für Löschen und Zurücksetzen. Mit Shift färbt sich
+    /// das Icon rot, damit vor dem Klick sichtbar ist, dass er wirkt.
+    /// </summary>
+    public static bool ShiftButton(string id, FontAwesomeIcon icon, string what)
+    {
+        var shift = ImGui.GetIO().KeyShift;
+
+        ImGui.PushFont(UiBuilder.IconFont);
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleColor(ImGuiCol.Text, shift ? Theme.Danger : Theme.Muted);
+        var clicked = ImGui.Button($"{icon.ToIconString()}##{id}");
+        ImGui.PopStyleColor(2);
+        ImGui.PopFont();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(shift ? $"Click to {what}." : $"Hold Shift to {what}.");
+
+        return clicked && shift;
+    }
+
+    public static float IconButtonWidth(FontAwesomeIcon icon)
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        var width = ImGui.CalcTextSize(icon.ToIconString()).X;
+        ImGui.PopFont();
+        return width + ImGui.GetStyle().FramePadding.X * 2;
     }
 }

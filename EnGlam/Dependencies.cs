@@ -5,47 +5,38 @@ using ECommons.Reflection;
 
 namespace EnGlam;
 
-public enum DependencyGroup
+/// <summary>Required: muss da sein. AnyOf: mindestens eines der Gruppe. Conflict: soll nicht gleichzeitig laufen.</summary>
+public enum DependencyKind
 {
     Required,
-    Rotation,
+    AnyOf,
     Conflict,
 }
 
-/// <param name="Repositories">Erste Adresse ist das Haupt-Repository, weitere sind Spiegel; leer bei Plugins ohne Install-Knopf.</param>
+/// <param name="Repositories">Erste Adresse ist die bevorzugte, weitere sind Spiegel; leer bei Plugins ohne Install-Knopf. Für Plugins aus Dalamuds Haupt-Repository steht <see cref="Dependencies.MainRepository"/> darin.</param>
 public sealed record Dependency(
     string DisplayName,
     string InternalName,
     string Purpose,
     string Website,
-    DependencyGroup Group,
     string[] Repositories);
+
+/// <param name="Title">Überschrift im Tab; bei AnyOf kommt die Zahl der geladenen Plugins dazu.</param>
+public sealed record DependencyGroup(string Title, DependencyKind Kind, IReadOnlyList<Dependency> Items);
 
 public enum InstallState { Missing, Installed, Loaded }
 
 /// <summary>
-/// Plugins, mit denen EnGlam zusammenarbeitet, und ihre Installation. Installiert wird wie in Questionable
+/// Plugins, mit denen das Plugin zusammenarbeitet, und ihre Installation. Installiert wird wie in Questionable
 /// über ECommons DalamudReflector: Repository in Dalamud eintragen, falls es fehlt, dann über Dalamuds internen
 /// PluginManager installieren. Das greift per Reflection in Dalamud-Interna und kann nach Dalamud-Updates brechen.
 /// </summary>
-public sealed class Dependencies(IDalamudPluginInterface pluginInterface, IPluginLog log)
+public sealed class Dependencies(IDalamudPluginInterface pluginInterface, IPluginLog log, IReadOnlyList<DependencyGroup> groups)
 {
-    /// <summary>Repository-Adressen wie in Questionable 15.756.3.56.</summary>
-    public static readonly IReadOnlyList<Dependency> All =
-    [
-        new("AutoDuty", "AutoDuty", "Runs the duties for EnGlam.", "https://github.com/erdelf/AutoDuty",
-            DependencyGroup.Required, ["https://puni.sh/api/repository/erdelf"]),
-        new("vnavmesh", "vnavmesh", "Navigation that AutoDuty needs to move through duties.", "https://github.com/awgil/ffxiv_navmesh",
-            DependencyGroup.Required, ["https://puni.sh/api/repository/veyn"]),
-        new("Boss Mod", "BossMod", "Rotation and mechanics. AutoDuty switches it on while farming.", "https://github.com/awgil/ffxiv_bossmod",
-            DependencyGroup.Rotation, ["https://puni.sh/api/repository/veyn"]),
-        new("Wrath Combo", "WrathCombo", "Rotation with auto-rotation. AutoDuty switches it on while farming.", "https://github.com/PunishXIV/WrathCombo",
-            DependencyGroup.Rotation, ["https://love.puni.sh/ment.json", "https://puni.sh/api/plugins"]),
-        new("Rotation Solver Reborn", "RotationSolver", "Rotation. AutoDuty switches it on while farming.", "https://github.com/FFXIV-CombatReborn/RotationSolverReborn",
-            DependencyGroup.Rotation, ["https://raw.githubusercontent.com/FFXIV-CombatReborn/CombatRebornRepo/main/pluginmaster.json"]),
-        new("LazyLoot", "LazyLoot", "Also rolls on loot. With both loaded, two plugins roll at the same time.", "https://github.com/PunishXIV/LazyLoot",
-            DependencyGroup.Conflict, []),
-    ];
+    /// <summary>Adresse von Dalamuds Haupt-Repository; sie ist dort fest eingebaut und gehört nicht in die Liste der Fremd-Repositories.</summary>
+    public const string MainRepository = "https://kamori.goats.dev/Plugin/PluginMaster";
+
+    public IReadOnlyList<DependencyGroup> Groups { get; } = groups;
 
     // Threadsicher, weil die Installation im Hintergrund läuft, während das Fenster liest.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> installing = new();
@@ -104,7 +95,7 @@ public sealed class Dependencies(IDalamudPluginInterface pluginInterface, IPlugi
 
     private static async Task<bool> InstallFromRepositoryAsync(Dependency dependency)
     {
-        var repoUrl = dependency.Repositories.FirstOrDefault(DalamudReflector.HasRepo) ?? dependency.Repositories[0];
+        var repoUrl = dependency.Repositories.FirstOrDefault(r => r == MainRepository || DalamudReflector.HasRepo(r)) ?? dependency.Repositories[0];
 
         var manifests = await DalamudReflector.GetPluginMaster(repoUrl).ConfigureAwait(false);
         if (manifests is null || manifests.Count == 0)
@@ -113,7 +104,8 @@ public sealed class Dependencies(IDalamudPluginInterface pluginInterface, IPlugi
         var manifest = manifests.FirstOrDefault(m => string.Equals((string)m.GetFoP("InternalName"), dependency.InternalName, StringComparison.Ordinal))
             ?? throw new InvalidOperationException($"{dependency.DisplayName} isn't listed in {repoUrl}.");
 
-        if (!DalamudReflector.HasRepo(repoUrl))
+        // Das Haupt-Repository ist immer da; als Fremd-Repository eingetragen würde es doppelt geführt.
+        if (repoUrl != MainRepository && !DalamudReflector.HasRepo(repoUrl))
             DalamudReflector.AddRepo(repoUrl, enabled: true);
 
         DalamudReflector.SaveDalamudConfig();

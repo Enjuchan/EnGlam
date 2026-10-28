@@ -49,4 +49,7 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>AutoDutys Bare Mode: lässt beim Run Extras weg, so wie Questionable es standardmäßig nutzt.</summary>
     public bool BareMode { get; set; } = true;
+
+    /// <summary>Zeigt die Zeichenzeit in der Statuszeile und schreibt sie ins Log.</summary>
+    public bool ShowDiagnostics { get; set; }
 }

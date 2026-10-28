@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -59,6 +61,14 @@ public static class Theme
         (ImGuiCol.TableBorderStrong, CardBorder),
         (ImGuiCol.TableBorderLight, CardBorder),
         (ImGuiCol.TableRowBg, new Vector4(0, 0, 0, 0)),
+        (ImGuiCol.Tab, Hover),
+        (ImGuiCol.TabHovered, Hex(0x3D2B38)),
+        (ImGuiCol.TabActive, Hex(0x5C2A43)),
+        (ImGuiCol.TabUnfocused, Hover),
+        (ImGuiCol.TabUnfocusedActive, Hex(0x3D2B38)),
+        (ImGuiCol.ResizeGrip, Border),
+        (ImGuiCol.ResizeGripHovered, Hex(0x5C4057)),
+        (ImGuiCol.ResizeGripActive, Accent),
         (ImGuiCol.TableRowBgAlt, Hex(0x1A1319)),
         (ImGuiCol.TextSelectedBg, Hex(0x5C2A43)),
     ];
@@ -83,7 +93,16 @@ public static class Theme
         return new Scope(Colors.Length, 10);
     }
 
-    public static uint U32(Vector4 color) => ImGui.GetColorU32(color);
+    /// <summary>
+    /// Packt eine Farbe als ABGR wie ImGui, aber ohne Aufruf in die native Bibliothek; der Meter ruft das
+    /// hunderte Male je Frame auf. Eine globale Stil-Deckkraft wird dabei nicht angewendet, sie ist hier immer 1.
+    /// </summary>
+    public static uint U32(Vector4 color) => Pack(color.X, color.Y, color.Z, color.W);
+
+    public static uint Pack(float r, float g, float b, float a) =>
+        (Channel(a) << 24) | (Channel(b) << 16) | (Channel(g) << 8) | Channel(r);
+
+    private static uint Channel(float value) => (uint)(Math.Clamp(value, 0f, 1f) * 255f + 0.5f);
 
     public static Vector4 Hex(uint rgb, float alpha = 1f) =>
         new(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f, alpha);

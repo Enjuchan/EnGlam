@@ -1,3 +1,4 @@
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -15,6 +16,7 @@ public sealed class Plugin : IDalamudPlugin
     private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(500);
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+    [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
     [PluginService] internal static ICommandManager Commands { get; private set; } = null!;
     [PluginService] internal static IDataManager Data { get; private set; } = null!;
@@ -79,17 +81,19 @@ public sealed class Plugin : IDalamudPlugin
                 Log.Information("Im Handlauf erhalten: {Item}", game.ItemName(id));
             });
         Ui.Widgets.Init(Textures);
+        var version = PluginInterface.Manifest.AssemblyVersion.ToString(3);
         window = new MainWindow(config, Save, drops, game, planner, env, controller, farmList, autoDuty, guard, rolling,
-            PluginInterface.Manifest.AssemblyVersion.ToString(3), TryOn, history, new Dependencies(PluginInterface, Log), Log);
+            version, TryOn, history,
+            new Dependencies(PluginInterface, Log, EnGlamDependencies.Groups), EnGlamAbout.Create(version), Log);
 
         Framework.Update += OnUpdate;
-        PluginInterface.UiBuilder.Draw += window.Draw;
+        PluginInterface.UiBuilder.Draw += Draw;
         PluginInterface.UiBuilder.OpenMainUi += Toggle;
         PluginInterface.UiBuilder.OpenConfigUi += Toggle;
 
         Commands.AddHandler(Command, new CommandInfo((_, _) => Toggle())
         {
-            HelpMessage = "Opens or closes the EnGlam window.",
+            HelpMessage = EnGlamAbout.ToggleEffect,
         });
 
         Log.Information("EnGlam geladen.");
@@ -139,6 +143,17 @@ public sealed class Plugin : IDalamudPlugin
 
     private string loggedStatus = "idle";
 
+    private void Draw()
+    {
+        // Im Ladebildschirm wird nichts gezeichnet. Visible bleibt unberührt, damit das Fenster danach von selbst wiederkommt.
+        // Eine Prüfung auf den Login fehlt mit Absicht: Das Fenster ist zugleich das Einstellungsfenster und soll
+        // vom Titelbildschirm aus über den Plugin-Installer erreichbar sein.
+        if (Condition[ConditionFlag.BetweenAreas] || Condition[ConditionFlag.BetweenAreas51])
+            return;
+
+        window.Draw();
+    }
+
     private void Toggle() => window.Visible = !window.Visible;
 
     /// <summary>Öffnet die Anprobe des Spiels; im Framework-Takt, so wie Allagan Tools es macht.</summary>
@@ -149,7 +164,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         Commands.RemoveHandler(Command);
         Framework.Update -= OnUpdate;
-        PluginInterface.UiBuilder.Draw -= window.Draw;
+        PluginInterface.UiBuilder.Draw -= Draw;
         PluginInterface.UiBuilder.OpenMainUi -= Toggle;
         PluginInterface.UiBuilder.OpenConfigUi -= Toggle;
 
