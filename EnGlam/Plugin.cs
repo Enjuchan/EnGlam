@@ -8,6 +8,7 @@ using EnGlam.Core.Farming;
 using EnGlam.Core.Planning;
 using EnGlam.Core.Settings;
 using EnGlam.External;
+using EnGlam.Ui;
 
 namespace EnGlam;
 
@@ -36,6 +37,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly FarmController controller;
     private readonly ManualTracker manual;
     private readonly MainWindow window;
+    private WelcomeWindow welcomeWindow = null!;
+    private ChangelogWindow changelogWindow = null!;
+    private readonly Welcome welcome;
     private readonly WindowSystem windows = new("EnGlam");
     private DateTime nextTick;
 
@@ -44,7 +48,9 @@ public sealed class Plugin : IDalamudPlugin
         // ECommons braucht das für DalamudReflector, das der Dependencies-Tab zum Installieren nutzt.
         ECommons.ECommonsMain.Init(PluginInterface, this);
 
-        config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        // Null heißt: Dalamud hatte nie eine Konfiguration dieses Plugins, also eine Neuinstallation.
+        var savedConfig = PluginInterface.GetPluginConfig();
+        config = savedConfig as Configuration ?? new Configuration();
         Loc.Init(PluginInterface, config.Language);
 
         var drops = DropTables.Load(Log).ToIndex();
@@ -85,10 +91,30 @@ public sealed class Plugin : IDalamudPlugin
             });
         Ui.Widgets.Init(Textures);
         var version = PluginInterface.Manifest.AssemblyVersion.ToString(3);
+        var dependencies = new Dependencies(PluginInterface, Log, EnGlamDependencies.Groups);
         window = new MainWindow(config, Save, drops, game, planner, env, controller, farmList, autoDuty, guard, rolling,
             version, TryOn, history,
-            new Dependencies(PluginInterface, Log, EnGlamDependencies.Groups), EnGlamAbout.Create(version), Log);
+            dependencies, EnGlamAbout.Create(version),
+            () => welcomeWindow.IsOpen = true, () => changelogWindow.IsOpen = true, Log);
         windows.AddWindow(window);
+
+        var fullVersion = PluginInterface.Manifest.AssemblyVersion.ToString();
+        var saveLanguage = new Action<string>(code =>
+        {
+            config.Language = code;
+            Save();
+        });
+        welcome = new Welcome(ClientState, fullVersion, savedConfig is not null, config.LastSeenVersion, seen =>
+        {
+            config.LastSeenVersion = seen;
+            Save();
+        });
+        changelogWindow = new ChangelogWindow("EnGlam", EnGlamChangelog.Entries, welcome.IsNew, saveLanguage);
+        welcomeWindow = new WelcomeWindow(EnGlamWelcome.Create(version, config, Save),
+            dependencies,
+            () => window.IsOpen = true, () => changelogWindow.IsOpen = true, saveLanguage);
+        windows.AddWindow(welcomeWindow);
+        windows.AddWindow(changelogWindow);
 
         Framework.Update += OnUpdate;
         PluginInterface.UiBuilder.Draw += Draw;
@@ -98,6 +124,8 @@ public sealed class Plugin : IDalamudPlugin
         // Dalamud übernimmt den Hilfetext bei der Anmeldung, deshalb wird der Befehl beim Sprachwechsel neu angemeldet.
         RegisterCommand();
         Loc.Changed += RegisterCommand;
+
+        welcome.Start(() => welcomeWindow.IsOpen = true, () => changelogWindow.IsOpen = true);
 
         Log.Information("EnGlam geladen.");
     }
@@ -174,6 +202,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        welcome.Dispose();
         Loc.Changed -= RegisterCommand;
         Loc.Dispose();
         Commands.RemoveHandler(Command);

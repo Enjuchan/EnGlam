@@ -16,9 +16,6 @@ namespace EnGlam;
 
 public sealed class MainWindow : Window
 {
-    private static readonly Party[] Parties = Enum.GetValues<Party>();
-    private static readonly RotationChoice[] Rotations = Enum.GetValues<RotationChoice>();
-
     private readonly Configuration config;
     private readonly Action save;
     private readonly DropIndex drops;
@@ -35,6 +32,8 @@ public sealed class MainWindow : Window
     private readonly FarmHistory history;
     private readonly Dependencies dependencies;
     private readonly AboutInfo about;
+    private readonly Action openWelcome;
+    private readonly Action openChangelog;
     private readonly FrameTiming timing;
 
     private Theme.Scope? themeScope;
@@ -60,6 +59,8 @@ public sealed class MainWindow : Window
         FarmHistory history,
         Dependencies dependencies,
         AboutInfo about,
+        Action openWelcome,
+        Action openChangelog,
         Dalamud.Plugin.Services.IPluginLog log)
         : base("EnGlam###EnGlamMain")
     {
@@ -79,6 +80,8 @@ public sealed class MainWindow : Window
         this.history = history;
         this.dependencies = dependencies;
         this.about = about;
+        this.openWelcome = openWelcome;
+        this.openChangelog = openChangelog;
         timing = new FrameTiming(log, "Draw", TimeSpan.FromSeconds(5), () => config.ShowDiagnostics);
 
         Size = new Vector2(960, 660);
@@ -89,12 +92,6 @@ public sealed class MainWindow : Window
         RespectCloseHotkey = false;
         DisableWindowSounds = true;
         DisableFadeInFadeOut = true;
-
-        TitleBarButtons.Add(Loc.CreateButton(code =>
-        {
-            config.Language = code;
-            save();
-        }));
     }
 
     // Theme muss vor dem Begin des Fensters gesetzt sein, weil Fensterhintergrund und Titelleiste davon abhängen.
@@ -157,7 +154,7 @@ public sealed class MainWindow : Window
 
             case Tab.About:
                 ImGui.BeginChild("about", new Vector2(0, 0));
-                AboutView.Draw(about);
+                AboutView.Draw(about, openWelcome, openChangelog);
                 ImGui.EndChild();
                 break;
         }
@@ -178,6 +175,12 @@ public sealed class MainWindow : Window
 
     private int tab;
 
+    private void SaveLanguage(string code)
+    {
+        config.Language = code;
+        save();
+    }
+
     private void DrawHeader()
     {
         ImGui.AlignTextToFramePadding();
@@ -190,14 +193,14 @@ public sealed class MainWindow : Window
         ImGui.TextColored(Theme.Muted, version);
 
         var missing = MissingRequirement();
-        var rotationName = RotationLabel(config.Rotation);
+        var rotationName = SettingsControls.RotationLabel(config.Rotation);
         var rollingText = rolling.Available ? Loc.T("Rolling", "Würfeln") : Loc.T("Rolling unavailable", "Würfeln nicht verfügbar");
         var startLabel = controller.IsRunning ? Loc.T("Stop", "Stopp") : Loc.T("Start", "Start");
         var startIcon = controller.IsRunning ? FontAwesomeIcon.Stop : FontAwesomeIcon.Play;
 
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var total = Widgets.PillWidth("AutoDuty", true) + Widgets.PillWidth(rotationName, true)
-                  + Widgets.PillWidth(rollingText, true) + Widgets.PrimaryButtonWidth(startLabel, startIcon) + spacing * 3;
+                  + Widgets.PillWidth(rollingText, true) + Widgets.PrimaryButtonWidth(startLabel, startIcon) + Widgets.LanguagePillWidth() + spacing * 4;
 
         ImGui.SameLine(ImGui.GetContentRegionMax().X - total);
         Widgets.StatusPill("AutoDuty", autoDuty.IsLoaded ? Theme.Success : Theme.Danger);
@@ -232,6 +235,9 @@ public sealed class MainWindow : Window
             if (!canStart && ImGui.IsItemHovered())
                 ImGui.SetTooltip(missing ?? Loc.T("Add an item to the farm list first.", "Füge zuerst ein Item zur Farmliste hinzu."));
         }
+
+        ImGui.SameLine();
+        Widgets.LanguagePill(SaveLanguage);
 
         var status = Loc.T($"{StatusText()} · runs this session: {controller.SessionRuns}", $"{StatusText()} · Runs in dieser Sitzung: {controller.SessionRuns}");
         if (guard.Pending.Count > 0)
@@ -664,13 +670,7 @@ public sealed class MainWindow : Window
         {
             var half = (width - 32) / 2;
 
-            ImGui.TextColored(Theme.Muted, Loc.T("Party", "Gruppe"));
-            var party = config.Party;
-            if (Widgets.Segmented("party", Parties, PartyLabel, ref party, width))
-            {
-                config.Party = party;
-                save();
-            }
+            SettingsControls.PartyChoice(config, save, width);
 
             ImGui.Spacing();
             if (!ImGui.BeginTable("settingsGrid", 2, ImGuiTableFlags.None))
@@ -705,32 +705,10 @@ public sealed class MainWindow : Window
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            ImGui.AlignTextToFramePadding();
-            ImGui.TextUnformatted("Rotation");
-            ImGui.SameLine(half - 180);
-            ImGui.SetNextItemWidth(180);
-            if (ImGui.BeginCombo("##rotation", RotationLabel(config.Rotation)))
-            {
-                foreach (var r in Rotations)
-                {
-                    if (ImGui.Selectable(RotationLabel(r), r == config.Rotation))
-                    {
-                        config.Rotation = r;
-                        save();
-                    }
-                }
-
-                ImGui.EndCombo();
-            }
+            SettingsControls.RotationChoiceRow(config, save, half);
 
             ImGui.TableNextColumn();
-            var bare = config.BareMode;
-            if (Widgets.ToggleRow("Bare Mode", ref bare, half,
-                    Loc.T("AutoDuty skips its extras during the run, like Questionable does.", "AutoDuty lässt im Run seine Extras weg, so wie Questionable es macht.")))
-            {
-                config.BareMode = bare;
-                save();
-            }
+            SettingsControls.BareModeRow(config, save, half);
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -790,7 +768,7 @@ public sealed class MainWindow : Window
         : env.RotationAvailable ? null
         : config.Rotation is RotationChoice.AutoDutySetting or RotationChoice.All
             ? Loc.T("No rotation plugin loaded (Boss Mod, Wrath Combo or Rotation Solver Reborn).", "Kein Rotation-Plugin geladen (Boss Mod, Wrath Combo oder Rotation Solver Reborn).")
-            : Loc.T($"{RotationLabel(config.Rotation)} isn't loaded.", $"{RotationLabel(config.Rotation)} ist nicht geladen.");
+            : Loc.T($"{SettingsControls.RotationLabel(config.Rotation)} isn't loaded.", $"{SettingsControls.RotationLabel(config.Rotation)} ist nicht geladen.");
 
     private string DetailLine(FarmItem item, PlanResult? plan, bool manual)
     {
@@ -862,23 +840,6 @@ public sealed class MainWindow : Window
         DropKind.BossChest => Loc.T("boss chest", "Bosstruhe"),
         DropKind.Chest => Loc.T("chest", "Truhe"),
         _ => Loc.T("other", "Sonstige"),
-    };
-
-    private static string PartyLabel(Party p) => p switch
-    {
-        Party.DutyFinder => "Duty Finder",
-        Party.Support => "Duty Support",
-        _ => p.ToString(),
-    };
-
-    private static string RotationLabel(RotationChoice r) => r switch
-    {
-        RotationChoice.AutoDutySetting => Loc.T("AutoDuty setting", "AutoDuty-Einstellung"),
-        RotationChoice.BossMod => "Boss Mod",
-        RotationChoice.WrathCombo => "Wrath Combo",
-        RotationChoice.RotationSolverReborn => "Rotation Solver Reborn",
-        RotationChoice.All => Loc.T("All (AutoDuty picks)", "Alle (AutoDuty wählt)"),
-        _ => r.ToString(),
     };
 
     private static string Chance(decimal? chance) => chance is { } c ? $"{c:0.##} %" : Loc.T("unknown", "unbekannt");
