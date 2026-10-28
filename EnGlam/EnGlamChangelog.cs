@@ -5,6 +5,11 @@ public static class EnGlamChangelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.3.1", "2026-10-28",
+        [
+            new("The description in the About tab now wraps correctly.",
+                "Die Beschreibung im About-Tab bricht jetzt richtig um."),
+        ]),
         new("0.2.3.0", "2026-10-28",
         [
             new("A welcome window appears after you install EnGlam, with the first steps and the key settings.",
